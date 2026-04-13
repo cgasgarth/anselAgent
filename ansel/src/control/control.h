@@ -1,0 +1,298 @@
+/*
+    This file is part of darktable,
+    Copyright (C) 2009-2012, 2014-2015 johannes hanika.
+    Copyright (C) 2010-2011 Henrik Andersson.
+    Copyright (C) 2011 Robert Bieber.
+    Copyright (C) 2012 Richard Wonka.
+    Copyright (C) 2012-2017 Tobias Ellinghaus.
+    Copyright (C) 2013 Jochem Kossen.
+    Copyright (C) 2013, 2015 Jérémy Rosen.
+    Copyright (C) 2013 Simon Spannagel.
+    Copyright (C) 2014, 2019-2020 Aldric Renaudin.
+    Copyright (C) 2014, 2020-2021 Pascal Obry.
+    Copyright (C) 2014-2016 Roman Lebedev.
+    Copyright (C) 2015 Bruce Guenter.
+    Copyright (C) 2016-2017 Peter Budai.
+    Copyright (C) 2018 Andreas Schneider.
+    Copyright (C) 2018-2019 Edgardo Hoszowski.
+    Copyright (C) 2018 rawfiner.
+    Copyright (C) 2019, 2022-2023, 2025 Aurélien PIERRE.
+    Copyright (C) 2020 Chris Elston.
+    Copyright (C) 2020-2022 Diederik Ter Rahe.
+    Copyright (C) 2020 Hanno Schwalm.
+    Copyright (C) 2021 Ralf Brown.
+    Copyright (C) 2022 Martin Bařinka.
+    Copyright (C) 2024, 2026 Guillaume Stutin.
+    Copyright (C) 2025 Alynx Zhou.
+    
+    darktable is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    darktable is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    
+    You should have received a copy of the GNU General Public License
+    along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+
+#include "common/darktable.h"
+#include "common/dtpthread.h"
+
+#include "control/settings.h"
+
+#include <gtk/gtk.h>
+#include <inttypes.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include "control/jobs.h"
+#include "control/progress.h"
+#include "libs/lib.h"
+#include <gtk/gtk.h>
+
+#ifdef _WIN32
+#include <shobjidl.h>
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct dt_lib_backgroundjob_element_t;
+
+typedef GdkCursorType dt_cursor_t;
+
+typedef struct dt_control_pointer_input_t
+{
+  /* Widget-space pointer position from the latest motion/button event. */
+  double x;
+  double y;
+  /* Normalized in [0, 1]. */
+  double pressure;
+  gboolean has_pressure;
+  /* Raw tablet tilt axes (typically in [-1, 1]). */
+  double tilt_x;
+  double tilt_y;
+  /* Magnitude of tilt vector, normalized in [0, 1]. */
+  double tilt;
+  gboolean has_tilt;
+  /* Normalized in [0, 1]. */
+  double acceleration;
+  guint32 time_ms;
+} dt_control_pointer_input_t;
+
+// called from gui
+void *dt_control_expose(void *voidptr);
+void dt_control_button_pressed(double x, double y, double pressure, int which, int type, uint32_t state);
+void dt_control_button_released(double x, double y, int which, uint32_t state);
+void dt_control_mouse_moved(double x, double y, double pressure, int which);
+void dt_control_set_pointer_input(const dt_control_pointer_input_t *input);
+void dt_control_get_pointer_input(dt_control_pointer_input_t *input);
+void dt_control_key_pressed(GdkEventKey *event);
+void dt_control_mouse_leave();
+void dt_control_mouse_enter();
+gboolean dt_control_configure(GtkWidget *da, GdkEventConfigure *event, gpointer user_data);
+void dt_control_log(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+void dt_toast_log(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+void dt_toast_markup_log(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+void dt_control_log_busy_enter();
+void dt_control_toast_busy_enter();
+void dt_control_log_busy_leave();
+void dt_control_toast_busy_leave();
+void dt_control_draw_busy_msg(cairo_t *cr, int width, int height);
+// disable the possibility to change the cursor shape with dt_control_change_cursor
+void dt_control_forbid_change_cursor();
+// enable the possibility to change the cursor shape with dt_control_change_cursor
+void dt_control_allow_change_cursor();
+void dt_control_change_cursor(dt_cursor_t cursor);
+// set darktable.control->cursor to the desired cursor shape
+void dt_control_set_cursor(dt_cursor_t cursor);
+// commit the currently set cursor shape from darktable.control->cursor
+void dt_control_commit_cursor();
+void dt_control_write_sidecar_files();
+void dt_control_save_xmp(const int32_t imgid);
+void dt_control_save_xmps(const GList *imgids, const gboolean check_history);
+void dt_control_delete_images();
+
+/** \brief request redraw of the workspace.
+    This redraws the whole workspace within a gdk critical
+    section to prevent several threads to carry out a redraw
+    which will end up in crashes.
+ */
+void dt_control_queue_redraw();
+
+/** \brief request redraw of center window.
+    This redraws the center view within a gdk critical section
+    to prevent several threads to carry out the redraw.
+*/
+void dt_control_queue_redraw_center();
+
+/** \brief threadsafe request of redraw of specific widget.
+    Use this function if you need to redraw a specific widget
+    if your current thread context is not gtk main thread.
+*/
+void dt_control_queue_redraw_widget(GtkWidget *widget);
+
+/** \brief request redraw of the navigation widget.
+    This redraws the wiget of the navigation module.
+ */
+void dt_control_navigation_redraw();
+
+/** \brief request redraw of the log widget.
+    This redraws the message label.
+ */
+void dt_control_log_redraw();
+
+/** \brief request redraw of the toast widget.
+    This redraws the message label.
+ */
+void dt_control_toast_redraw();
+
+void dt_ctl_switch_mode_to(const char *mode);
+void dt_ctl_switch_mode_to_by_view(const dt_view_t *view);
+void dt_ctl_reload_view(const char *mode);
+
+struct dt_control_t;
+
+/** sets the hinter message */
+void dt_control_hinter_message(const struct dt_control_t *s, const char *message);
+
+#define DT_CTL_LOG_SIZE 10
+#define DT_CTL_LOG_MSG_SIZE 1000
+#define DT_CTL_LOG_TIMEOUT 8000
+#define DT_CTL_TOAST_SIZE 10
+#define DT_CTL_TOAST_MSG_SIZE 300
+#define DT_CTL_TOAST_TIMEOUT 5000
+/**
+ * this manages everything time-consuming.
+ * distributes the jobs on all processors,
+ * performs scheduling.
+ */
+typedef struct dt_control_t
+{
+  // gui related stuff
+  double tabborder;
+  int32_t width, height;
+  pthread_t gui_thread;
+  int button_down, button_down_which, button_type;
+  double button_x, button_y;
+  int history_start;
+  int32_t mouse_over_id;
+  int32_t keyboard_over_id;
+  gboolean lock_cursor_shape;
+  dt_cursor_t cursor; // cursor to draw at the end of mouse_moved
+
+  // message log
+  int log_pos, log_ack;
+  char log_message[DT_CTL_LOG_SIZE][DT_CTL_LOG_MSG_SIZE];
+  guint log_message_timeout_id;
+  int log_busy;
+  dt_pthread_mutex_t log_mutex;
+
+  // toast log
+  int toast_pos, toast_ack;
+  char toast_message[DT_CTL_TOAST_SIZE][DT_CTL_TOAST_MSG_SIZE];
+  guint toast_message_timeout_id;
+  int toast_busy;
+  dt_pthread_mutex_t toast_mutex;
+
+  // gui settings
+  dt_pthread_mutex_t global_mutex, image_mutex;
+  double last_expose_time;
+
+  // job management
+  int32_t running;
+  gboolean export_scheduled;
+  dt_pthread_mutex_t queue_mutex, cond_mutex, run_mutex;
+  pthread_cond_t cond;
+  int32_t num_threads;
+  pthread_t *thread, kick_on_workers_thread;
+  dt_job_t **job;
+
+  GList *queues[DT_JOB_QUEUE_MAX];
+  size_t queue_length[DT_JOB_QUEUE_MAX];
+
+  dt_pthread_mutex_t res_mutex;
+  dt_job_t *job_res[DT_CTL_WORKER_RESERVED];
+  uint8_t new_res[DT_CTL_WORKER_RESERVED];
+  pthread_t thread_res[DT_CTL_WORKER_RESERVED];
+
+  struct
+  {
+    GList *list;
+    size_t list_length;
+    size_t n_progress_bar;
+    double global_progress;
+    dt_pthread_mutex_t mutex;
+
+#ifdef _WIN32
+    ITaskbarList3 *taskbarlist;
+#endif
+
+    // these proxy functions should ONLY be used by control/process.c!
+    struct
+    {
+      dt_lib_module_t *module;
+      void *(*added)(dt_lib_module_t *self, gboolean has_progress_bar, const gchar *message);
+      void (*destroyed)(dt_lib_module_t *self, struct dt_lib_backgroundjob_element_t *instance);
+      void (*cancellable)(dt_lib_module_t *self, struct dt_lib_backgroundjob_element_t *instance,
+                          dt_progress_t *progress);
+      void (*updated)(dt_lib_module_t *self, struct dt_lib_backgroundjob_element_t *instance, double value);
+      void (*message_updated)(dt_lib_module_t *self, struct dt_lib_backgroundjob_element_t *instance,
+                              const char *message);
+    } proxy;
+
+  } progress_system;
+
+  /* proxy */
+  // TODO: this is unused now, but deleting it makes g_free(darktable.control)
+  // segfault on double free or corruption. Find out why.
+  struct
+  {
+
+    struct
+    {
+      dt_lib_module_t *module;
+      void (*set_message)(dt_lib_module_t *self, const gchar *message);
+    } hinter;
+
+  } proxy;
+
+} dt_control_t;
+
+void dt_control_init(dt_control_t *s);
+
+// join all worker threads.
+void dt_control_shutdown(dt_control_t *s);
+void dt_control_cleanup(dt_control_t *s);
+
+// call this to quit dt
+void dt_control_quit();
+
+/** get threadsafe running state. */
+int dt_control_running();
+
+// thread-safe interface between core and gui.
+// is the locking really needed?
+int32_t dt_control_get_mouse_over_id();
+void dt_control_set_mouse_over_id(int32_t value);
+
+int32_t dt_control_get_keyboard_over_id();
+void dt_control_set_keyboard_over_id(int32_t value);
+
+#ifdef __cplusplus
+}
+#endif
+
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on

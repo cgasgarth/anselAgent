@@ -1,0 +1,79 @@
+#!/bin/bash
+#   This file is part of darktable,
+#   Copyright (C) 2012 James C. McPherson.
+#   Copyright (C) 2017 Tobias Jakobs.
+#   Copyright (C) 2022 Aurélien PIERRE.
+#   
+#   darktable is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#   
+#   darktable is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#   
+#   You should have received a copy of the GNU General Public License
+#   along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+
+# This script takes an installed build of ansel
+# (see https://www.darktable.org) and turns it into a new IPS package
+# ready for distribution
+#
+#   
+PKGSEND=/usr/bin/pkgsend
+PKGRECV=/usr/bin/pkgrecv
+PKGREPO=/usr/bin/pkgrepo
+PKGDEPOT=/usr/lib/pkg.depotd
+
+MKDIR=/usr/bin/mkdir
+ECHO=/usr/bin/echo
+GZIP=/usr/bin/gzip
+SED=/usr/bin/sed
+SLEEP=/usr/bin/sleep
+KILL=/usr/bin/kill
+PGREP=/usr/bin/pgrep
+AWK=/usr/bin/nawk
+GIT=/usr/bin/git
+
+REPODIR=/tmp/ansel.repo.$$
+# change MYPUBLISHER if you want
+MYPUBLISHER=
+CSET=`git rev-parse --short=15 --verify HEAD`
+# change the VERSION depending on what the latest Release is
+RELEASE=1.0.3
+SUFFIX=
+if [ "$1" = "-r" ]; then
+    SUFFIX=""
+    VERSION=${RELEASE}
+else
+    SUFFIX="-git"
+    VERSION=`git describe HEAD |awk -F"-" '{print $3}'`
+fi
+
+
+if [ ! -f /opt/ansel/share/doc/ansel/README.Solaris ]; then
+    sudo cp README.Solaris /opt/ansel/share/doc/ansel
+fi
+
+# update the manifest...
+${SED} -e"s,|CHANGESET|,$CSET,g" -e"s,|VERSION|,$VERSION,g" \
+    -e"s,|SUFFIX|,$SUFFIX,g" -e"s,|RELEASE|,${RELEASE},g" \
+    < ansel-manifest.pkg5.base > manifest.$CSET
+${MKDIR} -p ${REPODIR}
+${PKGREPO} create ${REPODIR}
+${PKGREPO} add-publisher -s ${REPODIR} ${MYPUBLISHER:-JMCP}
+
+# startup the pkg.depotd server on a high (>1024) port number
+${PKGDEPOT} -p 24602 -d ${REPODIR} > /tmp/dt.depotd.log.$$ 2>&1 &
+${SLEEP} 30
+${PKGSEND} publish -s http://localhost:24602 --fmri-in-manifest \
+	-d / manifest.$CSET
+
+${PKGRECV} -s http://localhost:24602 -d Darktable.$CSET.p5p \
+    -a "ansel/ansel$SUFFIX"
+${GZIP} -9 Darktable.$CSET.p5p
+
+# kill off the depotd:
+${KILL} $( ${PGREP} -n pkg.depotd )

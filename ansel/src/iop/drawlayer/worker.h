@@ -1,0 +1,91 @@
+/*
+    This file is part of the Ansel project.
+    Copyright (C) 2026 Aurélien PIERRE.
+
+    Ansel is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Ansel is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Ansel.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#pragma once
+
+#include "iop/iop_api.h"
+#include "iop/drawlayer/paint.h"
+
+/** @file
+ *  @brief Background stroke worker API for drawlayer realtime painting.
+ */
+
+/** @brief Opaque worker state (thread, queue, stroke runtime). */
+typedef struct dt_drawlayer_worker_t dt_drawlayer_worker_t;
+typedef enum dt_drawlayer_worker_state_t
+{
+  DT_DRAWLAYER_WORKER_STATE_STOPPED = 0,
+  DT_DRAWLAYER_WORKER_STATE_IDLE,
+  DT_DRAWLAYER_WORKER_STATE_BUSY,
+  DT_DRAWLAYER_WORKER_STATE_PAUSING,
+  DT_DRAWLAYER_WORKER_STATE_PAUSED,
+} dt_drawlayer_worker_state_t;
+typedef struct dt_drawlayer_worker_snapshot_t
+{
+  dt_drawlayer_worker_state_t backend_state;
+  guint backend_queue_count;
+  gboolean commit_pending;
+} dt_drawlayer_worker_snapshot_t;
+
+/** @brief Initialize worker and bind external state mirrors. */
+void dt_drawlayer_worker_init(dt_iop_module_t *self,
+                              dt_drawlayer_worker_t **worker,
+                              gboolean *painting,
+                              gboolean *finish_commit_pending,
+                              guint *stroke_sample_count,
+                              uint32_t *current_stroke_batch);
+/** @brief Stop worker and release all resources. */
+void dt_drawlayer_worker_cleanup(dt_drawlayer_worker_t **worker);
+/** @brief Query whether realtime/backend worker still has pending activity. */
+gboolean dt_drawlayer_worker_active(const dt_drawlayer_worker_t *worker);
+/** @brief Query whether any worker still has pending activity. */
+gboolean dt_drawlayer_worker_any_active(const dt_drawlayer_worker_t *worker);
+/** @brief Return a thread-safe worker snapshot for runtime scheduling. */
+void dt_drawlayer_worker_get_snapshot(const dt_drawlayer_worker_t *worker,
+                                      dt_drawlayer_worker_snapshot_t *snapshot);
+/** @brief Request asynchronous commit once queues become idle. */
+void dt_drawlayer_worker_request_commit(dt_drawlayer_worker_t *worker);
+/** @brief Flush pending events and force commit transition. */
+void dt_drawlayer_worker_flush_pending(dt_drawlayer_worker_t *worker);
+/** @brief Ensure realtime/backend worker threads are started. */
+gboolean dt_drawlayer_worker_ensure_running(dt_iop_module_t *self, dt_drawlayer_worker_t *worker);
+/** @brief Stop realtime and full-resolution worker threads. */
+void dt_drawlayer_worker_stop(dt_iop_module_t *self, dt_drawlayer_worker_t *worker);
+/** @brief Seal current stroke for synchronous commit. */
+void dt_drawlayer_worker_seal_for_commit(dt_drawlayer_worker_t *worker);
+/** @brief Publish accumulated backend stroke damage into drawlayer process/runtime state. */
+void dt_drawlayer_worker_publish_backend_stroke_damage(dt_iop_module_t *self);
+/** @brief Reset worker-owned backend damage accumulator. */
+void dt_drawlayer_worker_reset_backend_path(dt_drawlayer_worker_t *worker);
+/** @brief Reset worker-owned transient live-publish state. */
+void dt_drawlayer_worker_reset_live_publish(dt_drawlayer_worker_t *worker);
+/** @brief Clear preserved stroke runtime/history after a completed commit. */
+void dt_drawlayer_worker_reset_stroke(dt_drawlayer_worker_t *worker);
+/** @brief Read-only access to preserved raw input queue for current stroke (valid only while worker is idle). */
+GArray *dt_drawlayer_worker_raw_inputs(dt_drawlayer_worker_t *worker);
+/** @brief Read-only access to preserved stroke runtime (valid only while worker is idle). */
+dt_drawlayer_paint_stroke_t *dt_drawlayer_worker_stroke(dt_drawlayer_worker_t *worker);
+/** @brief Return the number of interpolated-but-not-yet-rasterized dabs in the current stroke batch. */
+guint dt_drawlayer_worker_pending_dab_count(const dt_drawlayer_worker_t *worker);
+
+/** @brief Enqueue one raw input event (FIFO, no coalescing). */
+gboolean dt_drawlayer_worker_enqueue_input(dt_drawlayer_worker_t *worker,
+                                           const dt_drawlayer_paint_raw_input_t *input);
+/** @brief Enqueue stroke-end marker carrying final raw input sample. */
+gboolean dt_drawlayer_worker_enqueue_stroke_end(dt_drawlayer_worker_t *worker,
+                                                const dt_drawlayer_paint_raw_input_t *input);

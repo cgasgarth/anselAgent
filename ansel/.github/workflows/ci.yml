@@ -1,0 +1,272 @@
+#   This file is part of darktable,
+#   Copyright (C) 2020-2021 Hubert Kowalski.
+#   Copyright (C) 2020-2021 Pascal Obry.
+#   Copyright (C) 2021-2026 Aurélien PIERRE.
+#   Copyright (C) 2021 Daniel Vogelbacher.
+#   Copyright (C) 2021 luzpaz.
+#   Copyright (C) 2021-2022 Miloš Komarčević.
+#   Copyright (C) 2021-2022 parafin.
+#   Copyright (C) 2021 Simon Frei.
+#   Copyright (C) 2022 Apfelkraut.
+#   Copyright (C) 2022 naveen.
+#   Copyright (C) 2025 Guillaume Stutin.
+#   Copyright (C) 2025 Miguel Moquillon.
+#   
+#   darktable is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#   
+#   darktable is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#   
+#   You should have received a copy of the GNU General Public License
+#   along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+
+name: CI
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Keep in sync with manualrun.yml!
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+      - candidate
+    paths-ignore:
+        - "po/**"
+        - "packaging/**"
+        - "data/latex/**"
+        - "data/lua/**"
+        - "data/pixmaps/**"
+        - "data/pswp/**"
+        - "data/style/**"
+        - "data/themes/**"
+        - "data/watermarks/**"
+        - "**.md"
+        - "**.yml"
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+        - "po/**"
+        - "packaging/**"
+        - "data/latex/**"
+        - "data/lua/**"
+        - "data/pixmaps/**"
+        - "data/pswp/**"
+        - "data/style/**"
+        - "data/themes/**"
+        - "data/watermarks/**"
+        - "**.md"
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+
+jobs:
+  Linux:
+    name: Linux.${{ matrix.os.code }}.${{ matrix.compiler.compiler }}.${{ matrix.target }}.${{ matrix.btype }}.${{ matrix.generator }}
+    runs-on: ${{ matrix.os.label }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - { label: ubuntu-24.04, code: noble }
+        compiler:
+          - { compiler: GNU14,  CC: gcc-14,   CXX: g++-14,   GCC_VER: "14", LLVM_VER: "" }
+          - { compiler: LLVM20, CC: clang-20, CXX: clang++-20, GCC_VER: "", LLVM_VER: "20" }
+        btype:
+          - Debug
+        target:
+          - skiptest
+          - nofeatures
+        generator:
+          - Ninja
+    env:
+      CC: ${{ matrix.compiler.CC }}
+      CXX: ${{ matrix.compiler.CXX }}
+      GCC_VER: ${{ matrix.compiler.GCC_VER }}
+      LLVM_VER: ${{ matrix.compiler.LLVM_VER }}
+      SRC_DIR: ${{ github.workspace }}/src
+      BUILD_DIR: ${{ github.workspace }}/build
+      INSTALL_PREFIX: ${{ github.workspace }}/install
+      CMAKE_BUILD_TYPE: ${{ matrix.btype }}
+      GENERATOR: ${{ matrix.generator }}
+      TARGET: ${{ matrix.target }}
+      DARKTABLE_CLI: ${{ github.workspace }}/install/bin/ansel-cli
+    steps:
+      - name: Enable compiler repositories
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+          sudo add-apt-repository -y universe
+          sudo add-apt-repository -y multiverse
+      - name: Setup LLVM 20
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg
+          wget https://apt.llvm.org/llvm-snapshot.gpg.key
+          sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg llvm-snapshot.gpg.key
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20 libomp-20-dev
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 1
+          path: src
+      - name: Install Base Dependencies
+        run: |
+          "${SRC_DIR}/packaging/install-deps-ubuntu.sh"
+      - name: Build and Install
+        run: |
+          cmake -E make_directory "${BUILD_DIR}";
+          cmake -E make_directory "${INSTALL_PREFIX}";
+          ./src/.ci/ci-script.sh;
+      - name: Check if it runs
+        run: |
+          ${INSTALL_PREFIX}/bin/ansel --version || true
+          ${INSTALL_PREFIX}/bin/ansel-cli \
+                 --width 2048 --height 2048 \
+                 --apply-custom-presets false \
+                 "${SRC_DIR}/src/tests/integration/images/mire1.cr2" \
+                 "${SRC_DIR}/src/tests/integration/0000-nop/nop.xmp" \
+                 output.png \
+                 --core --disable-opencl --conf host_memory_limit=8192 \
+                 --conf worker_threads=4 -t 4 \
+                 --conf plugins/lighttable/export/force_lcms2=FALSE \
+                 --conf plugins/lighttable/export/iccintent=0
+      - name: Run Integration test suite
+        #integration test can get "stuck" plus there are couple of errors here, so it needs to be addressed first
+        if: ${{ false }}
+        run: |
+          cd "${SRC_DIR}/src/tests/integration/"
+          ./run.sh --no-opencl --no-deltae --fast-fail
+
+  Win64:
+    name: Win64.${{ matrix.msystem }}.${{ matrix.target }}.${{ matrix.btype }}.${{ matrix.generator }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        btype:
+          - Debug
+        eco: [-DUSE_XMLLINT=OFF]
+        target:
+          - skiptest
+          - nofeatures
+        generator:
+          - Ninja
+        msystem:
+          - UCRT64
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      SRC_DIR: ${{ github.workspace }}/src
+      BUILD_DIR: ${{ github.workspace }}/build
+      INSTALL_PREFIX: ${{ github.workspace }}/install
+      ECO: ${{ matrix.eco }}
+      CMAKE_BUILD_TYPE: ${{ matrix.btype }}
+      TARGET: ${{ matrix.target }}
+      GENERATOR: ${{ matrix.generator }}
+      # todo: use linker which supports --wrap, ld.bfd and ld.gold support it
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 1
+          path: src
+      - name: Install Base Dependencies
+        run: |
+          $(cygpath ${SRC_DIR})/packaging/install-deps-windows-msys2.sh
+      - name: Build and Install
+        run: |
+          cmake -E make_directory "${BUILD_DIR}"
+          cmake -E make_directory "${INSTALL_PREFIX}"
+          $(cygpath ${SRC_DIR})/.ci/ci-script.sh
+      - name: Check if it runs
+        run: |
+          $(cygpath ${INSTALL_PREFIX})/bin/ansel.exe --version || true
+          $(cygpath ${INSTALL_PREFIX})/bin/ansel-cli.exe --version || true
+          echo "Testing RUN!"
+          $(cygpath ${INSTALL_PREFIX})/bin/ansel-cli.exe \
+                 --verbose \
+                 --width 2048 --height 2048 \
+                 --apply-custom-presets false \
+                 $(cygpath ${SRC_DIR})/src/tests/integration/images/mire1.cr2 \
+                 $(cygpath ${SRC_DIR})/src/tests/integration/0000-nop/nop.xmp \
+                 output.png \
+                 --core --disable-opencl --conf host_memory_limit=8192 \
+                 --conf worker_threads=4 -t 4 \
+                 --conf plugins/lighttable/export/force_lcms2=FALSE \
+                 --conf plugins/lighttable/export/iccintent=0
+
+  macOS:
+    name: macOS.${{ matrix.compiler.compiler }}.${{ matrix.build.xcode }}.${{ matrix.target }}.${{ matrix.btype }}.${{ matrix.generator }}
+    runs-on: ${{ matrix.build.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        build:
+          - { os: macos-15, xcode: 26.3, deployment: 15.0 } # AppleClang 17, arm64
+        compiler:
+          - { compiler: XCode,   CC: cc, CXX: c++ }
+        btype:
+          - Debug
+        target:
+          - skiptest
+          - nofeatures
+        generator:
+          - Ninja
+        eco: [-DBUILD_SSE2_CODEPATHS=OFF -DUSE_GRAPHICSMAGICK=ON -DUSE_IMAGEMAGICK=OFF]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.build.xcode }}.app/Contents/Developer
+      CC: ${{ matrix.compiler.CC }}
+      CXX: ${{ matrix.compiler.CXX }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.build.deployment }}
+      SRC_DIR: ${{ github.workspace }}/src
+      BUILD_DIR: ${{ github.workspace }}/build
+      INSTALL_PREFIX: ${{ github.workspace }}/install
+      ECO: ${{ matrix.eco }}
+      CMAKE_BUILD_TYPE: ${{ matrix.btype }}
+      GENERATOR: ${{ matrix.generator }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 1
+          path: ${{ env.SRC_DIR }}
+      - name: Install Base Dependencies
+        run: |
+          "${SRC_DIR}/packaging/install-deps-macos.sh"
+      - name: Build and Install
+        run: |
+          cmake -E make_directory "${BUILD_DIR}";
+          cmake -E make_directory "${INSTALL_PREFIX}";
+          ./src/.ci/ci-script.sh;
+      - name: Check if it runs
+        run: |
+          ${INSTALL_PREFIX}/bin/ansel --version || true
+          ${INSTALL_PREFIX}/bin/ansel-cli \
+                 --width 2048 --height 2048 \
+                 --apply-custom-presets false \
+                 "${SRC_DIR}/src/tests/integration/images/mire1.cr2" \
+                 "${SRC_DIR}/src/tests/integration/0000-nop/nop.xmp" \
+                 output.png \
+                 --core --disable-opencl --conf host_memory_limit=8192 \
+                 --conf worker_threads=4 -t 4 \
+                 --conf plugins/lighttable/export/force_lcms2=FALSE \
+                 --conf plugins/lighttable/export/iccintent=0

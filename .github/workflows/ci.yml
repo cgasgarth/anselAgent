@@ -1,0 +1,192 @@
+name: anselAgent CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Restore pre-commit cache
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-py3.14-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Build backend package
+        run: uv build
+
+      - name: Run pre-commit checks
+        run: uvx pre-commit run --all-files
+
+      - name: Run Python tests
+        run: uv run pytest server/tests
+
+      - name: Run Python type checks
+        run: uv run ty check
+
+  ansel-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Restore ccache
+        uses: actions/cache@v5.0.4
+        with:
+          path: ~/.cache/ccache
+          key: ansel-ccache-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml', 'scripts/build_ansel_local.sh', 'ansel/build.sh', 'ansel/CMakeLists.txt', 'ansel/cmake/**') }}-${{ github.sha }}
+          restore-keys: |
+            ansel-ccache-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml', 'scripts/build_ansel_local.sh', 'ansel/build.sh', 'ansel/CMakeLists.txt', 'ansel/cmake/**') }}-
+            ansel-ccache-${{ runner.os }}-
+
+      - name: Install Linux build and headless test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          bash ./ansel/packaging/install-deps-ubuntu.sh
+
+      - name: Prime ccache
+        run: |
+          ccache --set-config=max_size=1G
+          ccache --zero-stats
+
+      - name: Build Ansel
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+        run: |
+          ./scripts/build_ansel_local.sh -- \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DBUILD_CMSTEST=OFF \
+            -DBUILD_PRINT=OFF \
+            -DBUILD_RS_IDENTIFY=OFF \
+            -DDONT_USE_INTERNAL_LIBRAW=ON \
+            -DTESTBUILD_OPENCL_PROGRAMS=OFF \
+            -DUSE_COLORD=OFF \
+            -DUSE_GMIC=OFF \
+            -DUSE_KWALLET=OFF \
+            -DUSE_LIBSECRET=OFF \
+            -DUSE_LUA=OFF \
+            -DUSE_MAP=OFF \
+            -DUSE_PORTMIDI=OFF
+
+      - name: Show ccache stats
+        if: always()
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+        run: ccache --show-stats
+
+      - name: Package Ansel install
+        run: tar -C ansel -cf "${RUNNER_TEMP}/ansel-install.tar" .install-master
+
+      - name: Upload Ansel install artifact
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: ansel-install
+          path: ${{ runner.temp }}/ansel-install.tar
+          retention-days: 7
+          compression-level: 0
+
+  mock-e2e:
+    runs-on: ubuntu-latest
+    needs: ansel-build
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.14'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: '24'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Install Linux runtime and headless test dependencies
+        run: |
+          sudo apt-get update
+          bash ./ansel/packaging/install-deps-ubuntu.sh
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Download Ansel install artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: ansel-install
+          path: ${{ runner.temp }}/ansel-install
+
+      - name: Extract Ansel install artifact
+        run: |
+          mkdir -p "${RUNNER_TEMP}/ansel-install-root"
+          tar -C "${RUNNER_TEMP}/ansel-install-root" -xf "${RUNNER_TEMP}/ansel-install/ansel-install.tar"
+
+      - name: Run multi-turn mock smoke test
+        env:
+          CLEAN_RUNTIME: '1'
+          INSTALL_PREFIX: ${{ runner.temp }}/ansel-install-root/.install-master
+          KEEP_ARTIFACTS: '1'
+          REPORT_FILE: ${{ runner.temp }}/multi-turn-report.ini
+          RUNTIME_DIR: ${{ runner.temp }}/ansel-runtime-multi
+          SERVER_LOG: ${{ runner.temp }}/multi-turn-server.log
+          SKIP_BUILD: '1'
+          SKIP_SERVER_TESTS: '1'
+        run: npm run agent:smoke:multi-turn
+
+      - name: Upload multi-turn mock smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: multi-turn-mock-e2e-artifacts
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/multi-turn-report.ini
+            ${{ runner.temp }}/multi-turn-server.log

@@ -1,0 +1,537 @@
+/*
+    This file is part of darktable,
+    Copyright (C) 2009-2013, 2016 johannes hanika.
+    Copyright (C) 2010-2011 Bruce Guenter.
+    Copyright (C) 2010-2011 Henrik Andersson.
+    Copyright (C) 2010 José Carlos García Sogo.
+    Copyright (C) 2010, 2012-2013 Pascal de Bruijn.
+    Copyright (C) 2010 Stuart Henderson.
+    Copyright (C) 2011 Antony Dovgal.
+    Copyright (C) 2011 Robert Bieber.
+    Copyright (C) 2011 Sergey Pavlov.
+    Copyright (C) 2012 Richard Wonka.
+    Copyright (C) 2012-2016, 2018-2019 Tobias Ellinghaus.
+    Copyright (C) 2012, 2014, 2016 Ulrich Pegelow.
+    Copyright (C) 2013-2016 Roman Lebedev.
+    Copyright (C) 2013 Simon Spannagel.
+    Copyright (C) 2014 parafin.
+    Copyright (C) 2015 Pedro Côrte-Real.
+    Copyright (C) 2017-2018, 2021 Dan Torop.
+    Copyright (C) 2017 Heiko Bauke.
+    Copyright (C) 2018-2023, 2025-2026 Aurélien PIERRE.
+    Copyright (C) 2018-2019 Edgardo Hoszowski.
+    Copyright (C) 2018 Maurizio Paglia.
+    Copyright (C) 2018-2022 Pascal Obry.
+    Copyright (C) 2018 rawfiner.
+    Copyright (C) 2019 Andreas Schneider.
+    Copyright (C) 2019 Diederik ter Rahe.
+    Copyright (C) 2019 emeikei.
+    Copyright (C) 2020 Aldric Renaudin.
+    Copyright (C) 2020, 2022 Diederik Ter Rahe.
+    Copyright (C) 2020-2021 Hubert Kowalski.
+    Copyright (C) 2020 Ralf Brown.
+    Copyright (C) 2021 lhietal.
+    Copyright (C) 2022 Hanno Schwalm.
+    Copyright (C) 2022 Martin Bařinka.
+    Copyright (C) 2022 Philipp Lutz.
+    
+    darktable is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    darktable is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    
+    You should have received a copy of the GNU General Public License
+    along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+*/
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+#include "bauhaus/bauhaus.h"
+#include "common/bilateral.h"
+#include "common/bilateralcl.h"
+#include "common/colorspaces.h"
+#include "common/math.h"
+#include "common/opencl.h"
+#include "control/control.h"
+#include "develop/develop.h"
+#include "develop/imageop.h"
+#include "develop/imageop_gui.h"
+#include "develop/tiling.h"
+#include "dtgtk/drawingarea.h"
+#include "gui/color_picker_proxy.h"
+#include "gui/gtk.h"
+#include "gui/presets.h"
+
+#include "iop/iop_api.h"
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+DT_MODULE_INTROSPECTION(2, dt_iop_monochrome_params_t)
+
+#define DT_COLORCORRECTION_INSET DT_PIXEL_APPLY_DPI(5)
+#define DT_COLORCORRECTION_MAX 40.
+#define PANEL_WIDTH 256.0f
+
+typedef struct dt_iop_monochrome_params_t
+{
+  float a; // $DEFAULT: 0.0
+  float b; // $DEFAULT: 0.0
+  float size; // $DEFAULT: 2.0
+  float highlights; // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.0
+} dt_iop_monochrome_params_t;
+
+typedef struct dt_iop_monochrome_data_t
+{
+  float a, b, size, highlights;
+} dt_iop_monochrome_data_t;
+
+typedef struct dt_iop_monochrome_gui_data_t
+{
+  GtkDrawingArea *area;
+  GtkWidget *highlights;
+  int dragging;
+  cmsHTRANSFORM xform;
+} dt_iop_monochrome_gui_data_t;
+
+const char *name()
+{
+  return _("monochrome");
+}
+
+int default_group()
+{
+  return IOP_GROUP_EFFECTS;
+}
+
+int flags()
+{
+  return IOP_FLAGS_INCLUDE_IN_STYLES | IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING | IOP_FLAGS_DEPRECATED;
+}
+
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, const dt_dev_pixelpipe_iop_t *piece)
+{
+  return IOP_CS_LAB;
+}
+
+void input_format(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece,
+                  dt_iop_buffer_dsc_t *dsc)
+{
+  default_input_format(self, pipe, piece, dsc);
+  dsc->channels = 4;
+  dsc->datatype = TYPE_FLOAT;
+}
+
+const char **description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("quickly convert an image to black & white using a variable color filter"),
+                                      _("creative"),
+                                      _("linear or non-linear, Lab, display-referred"),
+                                      _("non-linear, Lab"),
+                                      _("non-linear, Lab, display-referred"));
+}
+
+int legacy_params(dt_iop_module_t *self, const void *const old_params, const int old_version,
+                  void *new_params, const int new_version)
+{
+  if(old_version == 1 && new_version == 2)
+  {
+    dt_iop_monochrome_params_t *p1 = (dt_iop_monochrome_params_t *)old_params;
+    dt_iop_monochrome_params_t *p2 = (dt_iop_monochrome_params_t *)new_params;
+    memcpy(p2, p1, sizeof(dt_iop_monochrome_params_t) - sizeof(float));
+    p2->highlights = 0.0f;
+    return 0;
+  }
+  return 1;
+}
+
+void init_presets(dt_iop_module_so_t *self)
+{
+  dt_iop_monochrome_params_t p;
+
+  p.size = 2.3f;
+
+  p.a = 32.0f;
+  p.b = 64.0f;
+  p.highlights = 0.0f;
+  dt_gui_presets_add_generic(_("red filter"), self->op,
+                             self->version(), &p, sizeof(p), 1, DEVELOP_BLEND_CS_RGB_DISPLAY);
+
+  // p.a = 64.0f;
+  // p.b = -32.0f;
+  // dt_gui_presets_add_generic(_("purple filter"), self->op, self->version(), &p, sizeof(p), 1);
+
+  // p.a = -32.0f;
+  // p.b = -64.0f;
+  // dt_gui_presets_add_generic(_("blue filter"), self->op, self->version(), &p, sizeof(p), 1);
+
+  // p.a = -64.0f;
+  // p.b = 32.0f;
+  // dt_gui_presets_add_generic(_("green filter"), self->op, self->version(), &p, sizeof(p), 1);
+}
+
+static inline __attribute__((always_inline)) float color_filter(const float ai, const float bi, const float a, const float b, const float size)
+{
+  return dt_fast_expf(-CLAMPS(((ai - a) * (ai - a) + (bi - b) * (bi - b)) / (2.0 * size), 0.0f, 1.0f));
+}
+
+static inline __attribute__((always_inline)) float envelope(const float L)
+{
+  const float x = CLAMPS(L / 100.0f, 0.0f, 1.0f);
+  // const float alpha = 2.0f;
+  const float beta = 0.6f;
+  if(x < beta)
+  {
+    // return 1.0f-fabsf(x/beta-1.0f)^2
+    const float tmp = fabsf(x / beta - 1.0f);
+    return 1.0f - tmp * tmp;
+  }
+  else
+  {
+    const float tmp1 = (1.0f - x) / (1.0f - beta);
+    const float tmp2 = tmp1 * tmp1;
+    const float tmp3 = tmp2 * tmp1;
+    return 3.0f * tmp2 - 2.0f * tmp3;
+  }
+}
+
+__DT_CLONE_TARGETS__
+int process(struct dt_iop_module_t *self, const dt_dev_pixelpipe_t *pipe, const dt_dev_pixelpipe_iop_t *piece, const void *const i, void *const o)
+{
+  const dt_iop_roi_t *const roi_in = &piece->roi_in;
+  const dt_iop_roi_t *const roi_out = &piece->roi_out;
+  dt_iop_monochrome_data_t *d = (dt_iop_monochrome_data_t *)piece->data;
+  const float sigma2 = (d->size * 128.0) * (d->size * 128.0f);
+// first pass: evaluate color filter:
+  const size_t npixels = (size_t)roi_out->height * roi_out->width;
+  const float *const restrict in = (const float *)i;
+  float *const restrict out = (float *)o;
+  const float d_a = d->a;
+  const float d_b = d->b;
+  __OMP_PARALLEL_FOR__()
+  for(int k = 0; k < 4*npixels; k += 4)
+  {
+    out[k+0] = 100.0f * color_filter(in[k+1], in[k+2], d_a, d_b, sigma2);
+    out[k+1] = out[k+2] = 0.0f;
+    out[k+3] = in[k+3];
+  }
+
+  // second step: blur filter contribution:
+  const float scale = fmaxf(dt_dev_get_module_scale(pipe, roi_in), 1.f);
+  const float sigma_r = 250.0f; // does not depend on scale
+  const float sigma_s = 20.0f / scale;
+  const float detail = -1.0f; // bilateral base layer
+
+  dt_bilateral_t *b = dt_bilateral_init(roi_in->width, roi_in->height, sigma_s, sigma_r);
+  if(IS_NULL_PTR(b)) return 1;
+  dt_bilateral_splat(b, (float *)o);
+  dt_bilateral_blur(b);
+  dt_bilateral_slice(b, (float *)o, (float *)o, detail);
+  dt_bilateral_free(b);
+
+  const float highlights = d->highlights;
+  __OMP_PARALLEL_FOR__()
+  for(int k = 0; k < 4*npixels; k += 4)
+  {
+    const float tt = envelope(in[k]);
+    const float t = tt + (1.0f - tt) * (1.0f - highlights);
+    out[k] = (1.0f - t) * in[k] + t * out[k] * (1.0f / 100.0f) * in[k]; // normalized filter * input brightness
+  }
+  return 0;
+}
+
+
+void tiling_callback(struct dt_iop_module_t *self, const struct dt_dev_pixelpipe_t *pipe, const struct dt_dev_pixelpipe_iop_t *piece, struct dt_develop_tiling_t *tiling)
+{
+  const dt_iop_roi_t *const roi_in = &piece->roi_in;
+  const float scale = dt_dev_get_module_scale(pipe, roi_in);
+  const float sigma_s = 20.0f / scale;
+  const float sigma_r = 250.0f;
+
+  const int width = roi_in->width;
+  const int height = roi_in->height;
+  const int channels = 4;
+
+  const size_t basebuffer = sizeof(float) * channels * width * height;
+  const size_t bilat_mem = dt_bilateral_memory_use(width, height, sigma_s, sigma_r);
+
+  tiling->factor = 2.0f + (float)bilat_mem / basebuffer;
+  tiling->factor_cl = 3.0f + (float)bilat_mem / basebuffer;
+  tiling->maxbuf
+      = fmax(1.0f, (float)dt_bilateral_singlebuffer_size(width, height, sigma_s, sigma_r) / basebuffer);
+  tiling->maxbuf_cl = tiling->maxbuf;
+  tiling->overhead = 0;
+  tiling->overlap = ceilf(4 * sigma_s);
+  tiling->xalign = 1;
+  tiling->yalign = 1;
+  return;
+}
+
+void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pixelpipe_t *pipe,
+                   dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)p1;
+  dt_iop_monochrome_data_t *d = (dt_iop_monochrome_data_t *)piece->data;
+  d->a = p->a;
+  d->b = p->b;
+  d->size = p->size;
+  d->highlights = p->highlights;
+
+#ifdef HAVE_OPENCL
+  piece->process_cl_ready = (piece->process_cl_ready && !dt_opencl_avoid_atomics(pipe->devid));
+#endif
+}
+
+void gui_update(struct dt_iop_module_t *self)
+{
+  dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+  g->dragging = FALSE;
+}
+
+void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  piece->data = dt_calloc_align(sizeof(dt_iop_monochrome_data_t));
+  piece->data_size = sizeof(dt_iop_monochrome_data_t);
+}
+
+void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_free_align(piece->data);
+  piece->data = NULL;
+}
+
+static gboolean dt_iop_monochrome_draw(GtkWidget *widget, cairo_t *crf, gpointer user_data)
+{
+  if(darktable.gui->reset) return FALSE;
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+  dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)self->params;
+
+  const int inset = DT_COLORCORRECTION_INSET;
+  GtkAllocation allocation;
+  gtk_widget_get_allocation(widget, &allocation);
+  int width = allocation.width, height = allocation.height;
+  cairo_surface_t *cst = dt_cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+  cairo_t *cr = cairo_create(cst);
+  // clear bg
+  cairo_set_source_rgb(cr, .2, .2, .2);
+  cairo_paint(cr);
+
+  cairo_translate(cr, inset, inset);
+  cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+  width -= 2 * inset;
+  height -= 2 * inset;
+  // clip region to inside:
+  cairo_rectangle(cr, 0, 0, width, height);
+  cairo_clip(cr);
+  // flip y:
+  cairo_translate(cr, 0, height);
+  cairo_scale(cr, 1., -1.);
+  const int cells = 8;
+  for(int j = 0; j < cells; j++)
+    for(int i = 0; i < cells; i++)
+    {
+      double rgb[3] = { 0.5, 0.5, 0.5 };
+      cmsCIELab Lab;
+      Lab.L = 53.390011;
+      Lab.a = Lab.b = 0; // grey
+      // dt_iop_sRGB_to_Lab(rgb, Lab, 0, 0, 1.0, 1, 1); // get grey in Lab
+      Lab.a = PANEL_WIDTH * (i / (cells - 1.0) - .5);
+      Lab.b = PANEL_WIDTH * (j / (cells - 1.0) - .5);
+      const float f = color_filter(Lab.a, Lab.b, p->a, p->b, 40 * 40 * p->size * p->size);
+      Lab.L *= f * f; // exaggerate filter a little
+      cmsDoTransform(g->xform, &Lab, rgb, 1);
+      cairo_set_source_rgb(cr, rgb[0], rgb[1], rgb[2]);
+      cairo_rectangle(cr, width * i / (float)cells, height * j / (float)cells,
+                      width / (float)cells - DT_PIXEL_APPLY_DPI(1),
+                      height / (float)cells - DT_PIXEL_APPLY_DPI(1));
+      cairo_fill(cr);
+    }
+  cairo_set_antialias(cr, CAIRO_ANTIALIAS_DEFAULT);
+  cairo_set_source_rgb(cr, .7, .7, .7);
+  cairo_set_line_width(cr, DT_PIXEL_APPLY_DPI(2.0));
+  const float x = p->a * width / PANEL_WIDTH + width * .5f, y = p->b * height / PANEL_WIDTH + height * .5f;
+  cairo_arc(cr, x, y, width * .22f * p->size, 0, 2.0 * M_PI);
+  cairo_stroke(cr);
+
+  cairo_destroy(cr);
+  cairo_set_source_surface(crf, cst, 0, 0);
+  cairo_paint(crf);
+  cairo_surface_destroy(cst);
+  return TRUE;
+}
+
+void color_picker_apply(dt_iop_module_t *self, GtkWidget *picker, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)self->params;
+
+  if(fabsf(p->a - self->picked_color[1]) < 0.0001f
+     && fabsf(p->b - self->picked_color[2]) < 0.0001f)
+  {
+    // interrupt infinite loops
+    return;
+  }
+
+  p->a = self->picked_color[1];
+  p->b = self->picked_color[2];
+  float da = self->picked_color_max[1] - self->picked_color_min[1];
+  float db = self->picked_color_max[2] - self->picked_color_min[2];
+  p->size = CLAMP((da + db)/128.0, .5, 3.0);
+
+  dt_dev_add_history_item(darktable.develop, self, TRUE, TRUE);
+  dt_control_queue_redraw_widget(self->widget);
+}
+
+static gboolean dt_iop_monochrome_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+  dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)self->params;
+  if(g->dragging)
+  {
+    const float old_a = p->a, old_b = p->b;
+    const int inset = DT_COLORCORRECTION_INSET;
+    GtkAllocation allocation;
+    gtk_widget_get_allocation(widget, &allocation);
+    int width = allocation.width - 2 * inset, height = allocation.height - 2 * inset;
+    const float mouse_x = CLAMP(event->x - inset, 0, width);
+    const float mouse_y = CLAMP(height - 1 - event->y + inset, 0, height);
+    p->a = PANEL_WIDTH * (mouse_x - width * 0.5f) / (float)width;
+    p->b = PANEL_WIDTH * (mouse_y - height * 0.5f) / (float)height;
+
+    if(old_a != p->a || old_b != p->b) dt_dev_add_history_item(darktable.develop, self, TRUE, TRUE);
+    gtk_widget_queue_draw(self->widget);
+  }
+  return TRUE;
+}
+
+static gboolean dt_iop_monochrome_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+  if(event->button == 1)
+  {
+    dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+    dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+    dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)self->params;
+    dt_iop_color_picker_reset(self, TRUE);
+    if(event->type == GDK_2BUTTON_PRESS)
+    {
+      // reset
+      dt_iop_monochrome_params_t *p0 = (dt_iop_monochrome_params_t *)self->default_params;
+      p->a = p0->a;
+      p->b = p0->b;
+      p->size = p0->size;
+    }
+    else
+    {
+      const int inset = DT_COLORCORRECTION_INSET;
+      GtkAllocation allocation;
+      gtk_widget_get_allocation(widget, &allocation);
+      int width = allocation.width - 2 * inset, height = allocation.height - 2 * inset;
+      const float mouse_x = CLAMP(event->x - inset, 0, width);
+      const float mouse_y = CLAMP(height - 1 - event->y + inset, 0, height);
+      p->a = PANEL_WIDTH * (mouse_x - width * 0.5f) / (float)width;
+      p->b = PANEL_WIDTH * (mouse_y - height * 0.5f) / (float)height;
+      g->dragging = 1;
+      g_object_set(G_OBJECT(widget), "has-tooltip", FALSE, (gchar *)0);
+    }
+    gtk_widget_queue_draw(self->widget);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean dt_iop_monochrome_button_release(GtkWidget *widget, GdkEventButton *event, gpointer user_data)
+{
+  if(event->button == 1)
+  {
+    dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+    dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+    dt_iop_color_picker_reset(self, TRUE);
+    g->dragging = 0;
+    dt_dev_add_history_item(darktable.develop, self, TRUE, TRUE);
+    g_object_set(G_OBJECT(widget), "has-tooltip", TRUE, (gchar *)0);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean dt_iop_monochrome_leave_notify(GtkWidget *widget, GdkEventCrossing *event, gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+  g->dragging = 0;
+  gtk_widget_queue_draw(self->widget);
+  return TRUE;
+}
+
+static gboolean dt_iop_monochrome_scrolled(GtkWidget *widget, GdkEventScroll *event, gpointer user_data)
+{
+  dt_iop_module_t *self = (dt_iop_module_t *)user_data;
+  dt_iop_monochrome_params_t *p = (dt_iop_monochrome_params_t *)self->params;
+
+  dt_iop_color_picker_reset(self, TRUE);
+
+  int delta_y;
+  if(dt_gui_get_scroll_unit_deltas(event, NULL, &delta_y))
+  {
+    const float old_size = p->size;
+    p->size = CLAMP(p->size + delta_y * 0.1, 0.5f, 3.0f);
+    if(old_size != p->size) dt_dev_add_history_item(darktable.develop, self, TRUE, TRUE);
+    gtk_widget_queue_draw(widget);
+  }
+
+  return TRUE;
+}
+
+void gui_init(struct dt_iop_module_t *self)
+{
+  dt_iop_monochrome_gui_data_t *g = IOP_GUI_ALLOC(monochrome);
+
+  g->dragging = 0;
+
+  self->widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_BAUHAUS_SPACE);
+
+  g->area = GTK_DRAWING_AREA(dtgtk_drawing_area_new_with_aspect_ratio(1.0));
+  gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(g->area), TRUE, TRUE, 0);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(g->area), _("drag and scroll mouse wheel to adjust the virtual color filter"));
+
+  gtk_widget_add_events(GTK_WIDGET(g->area), GDK_POINTER_MOTION_MASK
+                                             | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK
+                                             | GDK_LEAVE_NOTIFY_MASK | darktable.gui->scroll_mask);
+  g_signal_connect(G_OBJECT(g->area), "draw", G_CALLBACK(dt_iop_monochrome_draw), self);
+  g_signal_connect(G_OBJECT(g->area), "button-press-event", G_CALLBACK(dt_iop_monochrome_button_press), self);
+  g_signal_connect(G_OBJECT(g->area), "button-release-event", G_CALLBACK(dt_iop_monochrome_button_release),
+                   self);
+  g_signal_connect(G_OBJECT(g->area), "motion-notify-event", G_CALLBACK(dt_iop_monochrome_motion_notify),
+                   self);
+  g_signal_connect(G_OBJECT(g->area), "leave-notify-event", G_CALLBACK(dt_iop_monochrome_leave_notify), self);
+  g_signal_connect(G_OBJECT(g->area), "scroll-event", G_CALLBACK(dt_iop_monochrome_scrolled), self);
+
+  g->highlights
+      = dt_color_picker_new(self, DT_COLOR_PICKER_AREA, dt_bauhaus_slider_from_params(self, N_("highlights")));
+  gtk_widget_set_tooltip_text(g->highlights, _("how much to keep highlights"));
+
+  cmsHPROFILE hsRGB = dt_colorspaces_get_profile(DT_COLORSPACE_SRGB, "", DT_PROFILE_DIRECTION_IN)->profile;
+  cmsHPROFILE hLab = dt_colorspaces_get_profile(DT_COLORSPACE_LAB, "", DT_PROFILE_DIRECTION_ANY)->profile;
+  g->xform = cmsCreateTransform(hLab, TYPE_Lab_DBL, hsRGB, TYPE_RGB_DBL, INTENT_PERCEPTUAL,
+                                0); // cmsFLAGS_NOTPRECALC);
+}
+
+void gui_cleanup(struct dt_iop_module_t *self)
+{
+  dt_iop_monochrome_gui_data_t *g = (dt_iop_monochrome_gui_data_t *)self->gui_data;
+  cmsDeleteTransform(g->xform);
+
+  IOP_GUI_FREE;
+}
+
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on

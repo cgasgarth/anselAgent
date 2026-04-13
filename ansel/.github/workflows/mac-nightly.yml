@@ -1,0 +1,164 @@
+#   This file is part of the Ansel project.
+#   Copyright (C) 2022-2023, 2025-2026 Aurélien PIERRE.
+#   Copyright (C) 2023 Alynx Zhou.
+#   Copyright (C) 2024 jakehl.
+#   Copyright (C) 2025-2026 Guillaume Stutin.
+#   Copyright (C) 2025 Miguel Moquillon.
+#   
+#   Ansel is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#   
+#   Ansel is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#   
+#   You should have received a copy of the GNU General Public License
+#   along with Ansel.  If not, see <http://www.gnu.org/licenses/>.
+
+
+
+
+
+
+
+
+
+
+name: Nightly Mac PKG
+
+on: 
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+jobs:
+  MacOS:
+    if: github.repository == 'aurelienpierreeng/ansel' || github.event_name == 'workflow_dispatch'
+    name: Nightly Ansel Mac OS build
+    runs-on: ${{ matrix.build.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build:
+          - { 
+            os: macos-15, 
+            xcode: 26.3, 
+            deployment: 15.0, 
+            tag: "arm64",
+            eco: "-DBINARY_PACKAGE_BUILD=OFF -DUSE_GRAPHICSMAGICK=ON -DUSE_IMAGEMAGICK=OFF -DDT_APPLE_X86_TARGET_CLONES=0 -DBUILD_SSE2_CODEPATHS=OFF",
+            } # AppleClang 17, arm64
+          - { 
+            os: macos-15-intel, 
+            xcode: 26.3, 
+            deployment: 15.0, 
+            tag: "intel64",
+            eco: "-DBINARY_PACKAGE_BUILD=ON -DUSE_GRAPHICSMAGICK=ON -DUSE_IMAGEMAGICK=OFF -DDT_APPLE_X86_TARGET_CLONES=1 -DBUILD_SSE2_CODEPATHS=ON",
+             } # AppleClang 17, intel64
+        btype:
+          - Release
+        compiler:
+          - { compiler: XCode,   CC: cc, CXX: c++ }
+        target:
+          - skiptest # In the case the generic .ci/ci-script.sh script is used.
+                     # But in our case, we invoke the more specific .ci/ci-script-mac.sh script
+        generator:
+          - Ninja
+        branch:
+          - { code: "${{ github.ref_name }}", label: stable }
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.build.xcode }}.app/Contents/Developer
+      CC: ${{ matrix.compiler.CC }}
+      CXX: ${{ matrix.compiler.CXX }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.build.deployment }}
+      SRC_DIR: ${{ github.workspace }}/src
+      BUILD_DIR: ${{ github.workspace }}/src/build
+      INSTALL_PREFIX: ${{ github.workspace }}/src/install
+      ECO: ${{ matrix.build.eco }}
+      CMAKE_BUILD_TYPE: ${{ matrix.btype }}
+      GENERATOR: ${{ matrix.generator }}
+      TARGET: ${{ matrix.target }}
+      BRANCH: ${{ matrix.branch.code }}
+      BUILD_NAME: ${{ matrix.branch.label }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 5000
+          submodules: true
+          fetch-tags: true
+          path: ${{ env.SRC_DIR }}
+      - name: Install Base Dependencies
+        run: |
+          "${SRC_DIR}/packaging/install-deps-macos.sh"
+      - name: Update lensfun data
+        if: ${{ success() }}
+        run: |
+          lensfun-update-data
+      - name: Build and Install
+        run: |
+          cmake -E make_directory "${BUILD_DIR}";
+          cmake -E make_directory "${INSTALL_PREFIX}";
+          cd ${SRC_DIR}
+          .ci/ci-script-mac.sh;
+      - name: Build macOS package
+        run: |
+          ./src/packaging/macosx/3_make_hb_ansel_package.sh
+      - name: Create DMG file
+        run: |
+          ./src/packaging/macosx/4_make_hb_ansel_dmg.sh
+      - name: Package upload
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ansel.${{ env.BUILD_NAME }}-${{ matrix.build.tag }}.mac
+          path: ${{ env.INSTALL_PREFIX }}/Ansel-*.dmg
+          retention-days: 90
+
+  upload_to_release:
+    runs-on: ubuntu-latest
+    needs: MacOS
+    env:
+      REPO: "https://github.com/aurelienpierreeng/ansel"
+      ROOM: "!SgRYbzspwqwwUgSQHC:matrix.org"
+      TAG: "v0.0.0"
+    steps:
+      - name: Checkout ansel source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: false
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ansel.stable-intel64.mac
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ansel.stable-arm64.mac
+      - name: Update nightly release
+        uses: aurelienpierreeng/tip@master
+        with:
+          tag: ${{ env.TAG }}
+          rm: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: Ansel-*.dmg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install simplematrixbotlib
+
+      - name: Notify Matrix
+        if: ${{ success() }}
+        run: |
+          FILENAME1=$(tr '~' '.' <<< "$(find . -type f -iname "Ansel-*arm64.dmg")")
+          FILENAME2=$(tr '~' '.' <<< "$(find . -type f -iname "Ansel-*i386.dmg")")
+          MESSAGE="New dmg packages [${FILENAME1}](${{ env.REPO }}/releases/download/${{ env.TAG }}/${FILENAME1}) and [${FILENAME2}](${{ env.REPO }}/releases/download/${{ env.TAG }}/${FILENAME2}) built"
+          python .ci/matrix.py \
+          -m "$MESSAGE" \
+          -s ${{ secrets.MATRIX_SERVER }} \
+          -u ${{ secrets.MATRIX_USER }} \
+          -t ${{ secrets.MATRIX_ACCESS }} \
+          -r ${{ env.ROOM }}

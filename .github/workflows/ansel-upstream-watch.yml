@@ -1,0 +1,92 @@
+name: Watch Ansel upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 14 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-upstream-ref:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Compare vendored Ansel tree to tracked upstream ref
+        id: compare
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import subprocess
+          from pathlib import Path
+
+          config = json.loads(Path("ansel-upstream.json").read_text())
+          original_base_tag = config["originalBaseTag"]
+          tracked_tag = config["trackedTag"]
+          result = subprocess.run(
+              [
+                  "python3",
+                  "scripts/ansel_upstream.py",
+                  "status",
+                  "--tag",
+                  tracked_tag,
+                  "--json",
+              ],
+              capture_output=True,
+              text=True,
+          )
+          if result.returncode not in (0, 1):
+              raise SystemExit(result.stderr or result.stdout)
+          report = json.loads(result.stdout)
+
+          print(f"original_base_tag={original_base_tag}")
+          print(f"tracked_tag={tracked_tag}")
+          print(f"compared_tag={report['comparedTag']}")
+          print(f"has_update={'false' if report['isClean'] else 'true'}")
+          print("status_json<<EOF")
+          print(result.stdout.strip())
+          print("EOF")
+          PY
+
+      - name: Open or update upstream sync issue
+        if: steps.compare.outputs.has_update == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_BASE_TAG: ${{ steps.compare.outputs.original_base_tag }}
+          TRACKED_TAG: ${{ steps.compare.outputs.tracked_tag }}
+          COMPARED_TAG: ${{ steps.compare.outputs.compared_tag }}
+          STATUS_JSON: ${{ steps.compare.outputs.status_json }}
+        run: |
+          title="Sync Ansel upstream ref ${TRACKED_TAG}"
+          body=$(cat <<EOF
+          The vendored Ansel tree no longer matches the tracked upstream ref.
+
+          - Original fork/base tag: `${ORIGINAL_BASE_TAG}`
+          - Tracked upstream ref: `${TRACKED_TAG}`
+          - Compared upstream ref: `${COMPARED_TAG}`
+
+          Suggested next steps:
+
+          1. Create a sync branch from `main`
+          2. Run `python3 scripts/ansel_upstream.py status --tag ${TRACKED_TAG}`
+          3. Update the vendored `ansel/` tree
+          4. Refresh `ansel-upstream.json` after the sync lands
+
+          Current status report:
+
+          ```json
+          ${STATUS_JSON}
+          ```
+
+          Reference: `docs/upstream-ansel.md`
+          EOF
+          )
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$title" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

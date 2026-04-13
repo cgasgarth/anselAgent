@@ -1,0 +1,243 @@
+/*
+  This file is part of darktable,
+  Copyright (C) 2013-2016 Roman Lebedev.
+  Copyright (C) 2013-2014, 2016, 2019 Tobias Ellinghaus.
+  Copyright (C) 2013-2014, 2016 Ulrich Pegelow.
+  Copyright (C) 2015 Pedro Côrte-Real.
+  Copyright (C) 2016 johannes hanika.
+  Copyright (C) 2017 Heiko Bauke.
+  Copyright (C) 2018, 2020, 2022-2023, 2025-2026 Aurélien PIERRE.
+  Copyright (C) 2018 Edgardo Hoszowski.
+  Copyright (C) 2018 Maurizio Paglia.
+  Copyright (C) 2018, 2020, 2022 Pascal Obry.
+  Copyright (C) 2018 rawfiner.
+  Copyright (C) 2019 Andreas Schneider.
+  Copyright (C) 2020 Aldric Renaudin.
+  Copyright (C) 2020, 2022 Diederik Ter Rahe.
+  Copyright (C) 2020 Ralf Brown.
+  Copyright (C) 2022 Hanno Schwalm.
+  Copyright (C) 2022 Martin Bařinka.
+  Copyright (C) 2022 Philipp Lutz.
+  
+  darktable is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+  
+  darktable is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+#include "bauhaus/bauhaus.h"
+#include "common/debug.h"
+#include "common/opencl.h"
+#include "control/control.h"
+#include "develop/develop.h"
+#include "develop/imageop.h"
+#include "develop/imageop_math.h"
+#include "develop/imageop_gui.h"
+#include "develop/tiling.h"
+
+#include "gui/gtk.h"
+#include "gui/presets.h"
+#include "iop/iop_api.h"
+
+#include <assert.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <gtk/gtk.h>
+#include <inttypes.h>
+
+DT_MODULE_INTROSPECTION(1, dt_iop_colisa_params_t)
+
+typedef struct dt_iop_colisa_params_t
+{
+  float contrast;   // $MIN: -1.0 $MAX: 1.0 $DEFAULT: 0.0
+  float brightness; // $MIN: -1.0 $MAX: 1.0 $DEFAULT: 0.0
+  float saturation; // $MIN: -1.0 $MAX: 1.0 $DEFAULT: 0.0
+} dt_iop_colisa_params_t;
+
+typedef struct dt_iop_colisa_gui_data_t
+{
+  GtkWidget *contrast;
+  GtkWidget *brightness;
+  GtkWidget *saturation;
+} dt_iop_colisa_gui_data_t;
+
+typedef struct dt_iop_colisa_data_t
+{
+  float contrast;
+  float brightness;
+  float saturation;
+  float ctable[0x10000];      // precomputed look-up table for contrast curve
+  float cunbounded_coeffs[3]; // approximation for extrapolation of contrast curve
+  float ltable[0x10000];      // precomputed look-up table for brightness curve
+  float lunbounded_coeffs[3]; // approximation for extrapolation of brightness curve
+} dt_iop_colisa_data_t;
+
+const char *name()
+{
+  return _("contrast brightness saturation");
+}
+
+const char **description(struct dt_iop_module_t *self)
+{
+  return dt_iop_set_description(self, _("adjust the look of the image"),
+                                      _("creative"),
+                                      _("non-linear, Lab, display-referred"),
+                                      _("non-linear, Lab"),
+                                      _("non-linear, Lab, display-referred"));
+}
+
+int flags()
+{
+  return IOP_FLAGS_INCLUDE_IN_STYLES | IOP_FLAGS_SUPPORTS_BLENDING | IOP_FLAGS_ALLOW_TILING | IOP_FLAGS_DEPRECATED;
+}
+
+int default_group()
+{
+  return IOP_GROUP_EFFECTS;
+}
+
+int default_colorspace(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, const dt_dev_pixelpipe_iop_t *piece)
+{
+  return IOP_CS_LAB;
+}
+
+void input_format(dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece,
+                  dt_iop_buffer_dsc_t *dsc)
+{
+  default_input_format(self, pipe, piece, dsc);
+  dsc->channels = 4;
+  dsc->datatype = TYPE_FLOAT;
+}
+
+__DT_CLONE_TARGETS__
+int process(struct dt_iop_module_t *self, const dt_dev_pixelpipe_t *pipe, const dt_dev_pixelpipe_iop_t *piece, const void *const ivoid,
+             void *const ovoid)
+{
+  (void)self;
+  (void)pipe;
+  const dt_iop_roi_t *const roi_in = &piece->roi_in;
+  dt_iop_colisa_data_t *data = (dt_iop_colisa_data_t *)piece->data;
+  float *in = (float *)ivoid;
+  float *out = (float *)ovoid;
+
+  const int width = roi_in->width;
+  const int height = roi_in->height;
+  const int ch = 4;
+  __OMP_PARALLEL_FOR__()
+  for(size_t k = 0; k < (size_t)width * height; k++)
+  {
+    float L = (in[k * ch + 0] < 100.0f)
+                  ? data->ctable[CLAMP((int)(in[k * ch + 0] / 100.0f * 0x10000ul), 0, 0xffff)]
+                  : dt_iop_eval_exp(data->cunbounded_coeffs, in[k * ch + 0] / 100.0f);
+    out[k * ch + 0] = (L < 100.0f) ? data->ltable[CLAMP((int)(L / 100.0f * 0x10000ul), 0, 0xffff)]
+                                   : dt_iop_eval_exp(data->lunbounded_coeffs, L / 100.0f);
+    out[k * ch + 1] = in[k * ch + 1] * data->saturation;
+    out[k * ch + 2] = in[k * ch + 2] * data->saturation;
+    out[k * ch + 3] = in[k * ch + 3];
+  }
+  return 0;
+}
+
+
+void commit_params(struct dt_iop_module_t *self, dt_iop_params_t *p1, dt_dev_pixelpipe_t *pipe,
+                   dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_iop_colisa_params_t *p = (dt_iop_colisa_params_t *)p1;
+  dt_iop_colisa_data_t *d = (dt_iop_colisa_data_t *)piece->data;
+
+  d->contrast = p->contrast + 1.0f; // rescale from [-1;+1] to [0;+2] (zero meaning no contrast -> gray plane)
+  d->brightness = p->brightness * 2.0f; // rescale from [-1;+1] to [-2;+2]
+  d->saturation = p->saturation + 1.0f; // rescale from [-1;+1] to [0;+2] (zero meaning no saturation -> b&w)
+
+  // generate precomputed contrast curve
+  if(d->contrast <= 1.0f)
+  {
+// linear curve for d->contrast below 1
+    __OMP_PARALLEL_FOR__()
+    for(int k = 0; k < 0x10000; k++) d->ctable[k] = d->contrast * (100.0f * k / 0x10000 - 50.0f) + 50.0f;
+  }
+  else
+  {
+    // sigmoidal curve for d->contrast above 1
+    const float boost = 20.0f;
+    const float contrastm1sq = boost * (d->contrast - 1.0f) * (d->contrast - 1.0f);
+    const float contrastscale = sqrtf(1.0f + contrastm1sq);
+    __OMP_PARALLEL_FOR__()
+    for(int k = 0; k < 0x10000; k++)
+    {
+      float kx2m1 = 2.0f * (float)k / 0x10000 - 1.0f;
+      d->ctable[k] = 50.0f * (contrastscale * kx2m1 / sqrtf(1.0f + contrastm1sq * kx2m1 * kx2m1) + 1.0f);
+    }
+  }
+
+  // now the extrapolation stuff for the contrast curve:
+  const float xc[4] = { 0.7f, 0.8f, 0.9f, 1.0f };
+  const float yc[4] = { d->ctable[CLAMP((int)(xc[0] * 0x10000ul), 0, 0xffff)],
+                        d->ctable[CLAMP((int)(xc[1] * 0x10000ul), 0, 0xffff)],
+                        d->ctable[CLAMP((int)(xc[2] * 0x10000ul), 0, 0xffff)],
+                        d->ctable[CLAMP((int)(xc[3] * 0x10000ul), 0, 0xffff)] };
+  dt_iop_estimate_exp(xc, yc, 4, d->cunbounded_coeffs);
+
+
+  // generate precomputed brightness curve
+  const float gamma = (d->brightness >= 0.0f) ? 1.0f / (1.0f + d->brightness) : (1.0f - d->brightness);
+  __OMP_PARALLEL_FOR__()
+  for(int k = 0; k < 0x10000; k++)
+  {
+    d->ltable[k] = 100.0f * powf((float)k / 0x10000, gamma);
+  }
+
+  // now the extrapolation stuff for the brightness curve:
+  const float xl[4] = { 0.7f, 0.8f, 0.9f, 1.0f };
+  const float yl[4] = { d->ltable[CLAMP((int)(xl[0] * 0x10000ul), 0, 0xffff)],
+                        d->ltable[CLAMP((int)(xl[1] * 0x10000ul), 0, 0xffff)],
+                        d->ltable[CLAMP((int)(xl[2] * 0x10000ul), 0, 0xffff)],
+                        d->ltable[CLAMP((int)(xl[3] * 0x10000ul), 0, 0xffff)] };
+  dt_iop_estimate_exp(xl, yl, 4, d->lunbounded_coeffs);
+}
+
+void init_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_iop_colisa_data_t *d = (dt_iop_colisa_data_t *)dt_calloc_align(sizeof(dt_iop_colisa_data_t));
+  piece->data = (void *)d;
+  piece->data_size = sizeof(dt_iop_colisa_data_t);
+  for(int k = 0; k < 0x10000; k++) d->ctable[k] = d->ltable[k] = 100.0f * k / 0x10000; // identity
+}
+
+void cleanup_pipe(struct dt_iop_module_t *self, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
+{
+  dt_free_align(piece->data);
+  piece->data = NULL;
+}
+
+void gui_init(struct dt_iop_module_t *self)
+{
+  dt_iop_colisa_gui_data_t *g = IOP_GUI_ALLOC(colisa);
+
+  g->contrast = dt_bauhaus_slider_from_params(self, N_("contrast"));
+  g->brightness = dt_bauhaus_slider_from_params(self, N_("brightness"));
+  g->saturation = dt_bauhaus_slider_from_params(self, N_("saturation"));
+
+  gtk_widget_set_tooltip_text(g->contrast, _("contrast adjustment"));
+  gtk_widget_set_tooltip_text(g->brightness, _("brightness adjustment"));
+  gtk_widget_set_tooltip_text(g->saturation, _("color saturation adjustment"));
+}
+
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on

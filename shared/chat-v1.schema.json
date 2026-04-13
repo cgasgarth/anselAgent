@@ -1,0 +1,634 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://anselagent.local/schemas/chat-v1.schema.json",
+  "title": "anselAgent Chat v3.0 Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "session",
+    "message",
+    "fast",
+    "refinement",
+    "uiContext",
+    "capabilityManifest",
+    "imageSnapshot"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "3.0"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "appSessionId",
+        "imageSessionId",
+        "conversationId",
+        "turnId"
+      ],
+      "properties": {
+        "appSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageSessionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conversationId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "turnId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "text"
+      ],
+      "properties": {
+        "role": {
+          "const": "user"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "fast": {
+      "type": "boolean"
+    },
+    "refinement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "enabled",
+        "maxPasses",
+        "passIndex",
+        "goalText"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "single-turn",
+            "multi-turn"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxPasses": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "passIndex": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "goalText": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "uiContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "view",
+        "imageId",
+        "imageName"
+      ],
+      "properties": {
+        "view": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imageId": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "imageName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "capabilityManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestVersion",
+        "targets"
+      ],
+      "properties": {
+        "manifestVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "moduleId",
+              "moduleLabel",
+              "capabilityId",
+              "label",
+              "kind",
+              "targetType",
+              "actionPath",
+              "supportedModes",
+              "minNumber",
+              "maxNumber",
+              "defaultNumber",
+              "stepNumber"
+            ],
+            "properties": {
+              "moduleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "moduleLabel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "capabilityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "set-float",
+                  "set-choice",
+                  "set-bool"
+                ]
+              },
+              "targetType": {
+                "const": "ansel-action"
+              },
+              "actionPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "supportedModes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "delta",
+                    "set"
+                  ]
+                }
+              },
+              "minNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "maxNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "defaultNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "stepNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "choices": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "choiceValue",
+                    "choiceId",
+                    "label"
+                  ],
+                  "properties": {
+                    "choiceValue": {
+                      "type": "integer"
+                    },
+                    "choiceId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              "defaultChoiceValue": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "defaultBool": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "imageSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "imageRevisionId",
+        "metadata",
+        "historyPosition",
+        "historyCount",
+        "editableSettings",
+        "history",
+        "preview",
+        "histogram"
+      ],
+      "properties": {
+        "imageRevisionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "imageId",
+            "imageName",
+            "cameraMaker",
+            "cameraModel",
+            "width",
+            "height",
+            "exifExposureSeconds",
+            "exifAperture",
+            "exifIso",
+            "exifFocalLength"
+          ],
+          "properties": {
+            "imageId": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "imageName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cameraMaker": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cameraModel": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "width": {
+              "type": "integer"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "exifExposureSeconds": {
+              "type": "number"
+            },
+            "exifAperture": {
+              "type": "number"
+            },
+            "exifIso": {
+              "type": "number"
+            },
+            "exifFocalLength": {
+              "type": "number"
+            }
+          }
+        },
+        "historyPosition": {
+          "type": "integer"
+        },
+        "historyCount": {
+          "type": "integer"
+        },
+        "editableSettings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "moduleId",
+              "moduleLabel",
+              "settingId",
+              "capabilityId",
+              "label",
+              "kind",
+              "actionPath",
+              "currentNumber",
+              "supportedModes",
+              "minNumber",
+              "maxNumber",
+              "defaultNumber",
+              "stepNumber",
+              "currentChoiceValue",
+              "currentChoiceId",
+              "choices",
+              "defaultChoiceValue",
+              "currentBool",
+              "defaultBool"
+            ],
+            "properties": {
+              "moduleId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "moduleLabel": {
+                "type": "string",
+                "minLength": 1
+              },
+              "settingId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "capabilityId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "set-float",
+                  "set-choice",
+                  "set-bool"
+                ]
+              },
+              "actionPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "currentNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "supportedModes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "enum": [
+                    "delta",
+                    "set"
+                  ]
+                }
+              },
+              "minNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "maxNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "defaultNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "stepNumber": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "currentChoiceValue": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "currentChoiceId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "choices": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "choiceValue",
+                    "choiceId",
+                    "label"
+                  ],
+                  "properties": {
+                    "choiceValue": {
+                      "type": "integer"
+                    },
+                    "choiceId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              },
+              "defaultChoiceValue": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "currentBool": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "defaultBool": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "num",
+              "module",
+              "enabled",
+              "multiPriority",
+              "instanceName",
+              "iopOrder"
+            ],
+            "properties": {
+              "num": {
+                "type": "integer"
+              },
+              "module": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "multiPriority": {
+                "type": "integer"
+              },
+              "instanceName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "iopOrder": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "preview": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "previewId",
+            "mimeType",
+            "width",
+            "height",
+            "base64Data"
+          ],
+          "properties": {
+            "previewId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mimeType": {
+              "type": "string",
+              "minLength": 1
+            },
+            "width": {
+              "type": "integer"
+            },
+            "height": {
+              "type": "integer"
+            },
+            "base64Data": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "histogram": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "binCount",
+            "channels"
+          ],
+          "properties": {
+            "binCount": {
+              "type": "integer"
+            },
+            "channels": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "bins"
+                ],
+                "properties": {
+                  "bins": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

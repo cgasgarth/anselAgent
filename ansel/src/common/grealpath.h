@@ -1,0 +1,99 @@
+/*
+    This file is part of darktable,
+    Copyright (C) 2013-2014, 2016 Tobias Ellinghaus.
+    Copyright (C) 2014 Roman Lebedev.
+    Copyright (C) 2020 Andreas Schneider.
+    Copyright (C) 2020 David-Tillmann Schaefer.
+    Copyright (C) 2021 Pascal Obry.
+    Copyright (C) 2022 Martin Bařinka.
+    
+    darktable is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    darktable is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    
+    You should have received a copy of the GNU General Public License
+    along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+*/
+/*
+ This code is taken from http://git.gnome.org/browse/gobject-introspection/tree/giscanner/grealpath.h .
+ According to http://git.gnome.org/browse/gobject-introspection/tree/COPYING it's licensed under the LGPLv2+.
+*/
+
+#pragma once
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <glib.h>
+
+#ifdef _WIN32
+#include <fileapi.h>
+#endif
+
+/**
+ * g_realpath:
+ *
+ * this should be a) filled in for win32 and b) put in glib...
+ */
+
+static inline gchar *g_realpath(const char *path)
+{
+#ifndef _WIN32
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+  char buffer[PATH_MAX] = { 0 };
+
+  char* res = realpath(path, buffer);
+
+  if(res)
+  {
+    return g_strdup(buffer);
+  }
+  else
+  {
+    fprintf(stderr, "path lookup '%s' fails with: '%s'\n", path, strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+#else
+  char *buffer;
+  char dummy;
+  int rc, len;
+
+  rc = GetFullPathNameA(path, 1, &dummy, NULL);
+
+  if(rc == 0)
+  {
+    /* Weird failure, so just return the input path as such */
+    return g_strdup(path);
+  }
+
+  len = rc + 1;
+  buffer = g_malloc(len);
+
+  rc = GetFullPathNameA(path, len, buffer, NULL);
+
+  if(rc == 0 || rc > len)
+  {
+    /* Weird failure again */
+    g_free(buffer);
+    buffer = NULL;
+    return g_strdup(path);
+  }
+
+  return buffer;
+#endif
+}
+
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on

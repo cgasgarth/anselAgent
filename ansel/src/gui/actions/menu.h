@@ -1,0 +1,239 @@
+/*
+    This file is part of the Ansel project.
+    Copyright (C) 2023, 2025 Aurélien PIERRE.
+    Copyright (C) 2023 Luca Zulberti.
+    Copyright (C) 2026 Guillaume Stutin.
+    
+    Ansel is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+    
+    Ansel is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+    
+    You should have received a copy of the GNU General Public License
+    along with Ansel.  If not, see <http://www.gnu.org/licenses/>.
+*/
+#include <gtk/gtk.h>
+#include <glib.h>
+
+#ifdef GDK_WINDOWING_QUARTZ
+#include "osx/osx.h"
+#endif
+
+#pragma once
+
+typedef enum dt_menu_icon_t
+{
+  DT_MENU_ICON_NONE = 0,
+  DT_MENU_ICON_CIRCLE,
+  DT_MENU_ICON_SQUARE
+} dt_menu_icon_t;
+
+typedef struct dt_menu_icon_data_t
+{
+  dt_menu_icon_t shape;
+} dt_menu_icon_data_t;
+
+typedef enum dt_menus_t
+{
+  DT_MENU_FILE = 0,
+  DT_MENU_EDIT,
+  DT_MENU_SELECTION,
+  DT_MENU_IMAGE,
+  DT_MENU_STYLES,
+  DT_MENU_RUN,
+  DT_MENU_DISPLAY,
+  DT_MENU_ATELIERS,
+  DT_MENU_HELP,
+  DT_MENU_LAST
+} dt_menus_t;
+
+typedef enum dt_menu_entry_style_t
+{
+  DT_MENU_ENTRY_DEFAULT = 0,
+  DT_MENU_ENTRY_CHECKBUTTON = 1,
+  DT_MENU_ENTRY_RADIOBUTTON = 2,
+  DT_MENU_ENTRY_LAST
+} dt_menu_entry_style_t;
+
+
+typedef struct dt_menu_entry_t
+{
+  GtkWidget *widget;         // Bounding box for the whole menu item
+  gboolean has_checkbox;     // Show or hide the checkbox, aka "is the current action setting a boolean ?"
+  gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable, guint keyval, GdkModifierType mods, gpointer user_data); // Callback to run when the menu item is clicked, aka the action
+  gboolean (*sensitive_callback)(GtkWidget *widget);      // Callback checking some conditions to decide whether the menu item should be made insensitive in current context
+  gboolean (*checked_callback)(GtkWidget *widget);        // Callback checking some conditions to determine if the boolean pref set by the item is currently TRUE or FALSE
+  gboolean (*active_callback)(GtkWidget *widget);         // Callback checking some conditions to determine if the menu item is the current view
+  dt_menus_t menu;           // Index of first-level menu
+  dt_menu_entry_style_t style;
+  GtkAccelGroup *accel_group;
+} dt_menu_entry_t;
+
+
+/** How to use:
+ *  1. write callback functions returning a gboolean that will check the context to decide if
+ *  the menu item should be insensitive, checked, active. These should only use the content of
+ *  globally accessible structures like `darktable.gui` since they take no arguments.
+ *
+ *  2. re-use the action callback functions already used for global keyboard shortcuts (actions/accels).
+ *  Again, all inputs and internal functions should be globally accessible, for example using proxies.
+ *
+ *  3. wire everything with the `set_menu_entry` function below. GUI states of the children menu items
+ *  will be updated automatically everytime a top-level menu is opened.
+ **/
+
+dt_menu_entry_t *set_menu_entry(GtkWidget **menus, GList **items_list, const gchar *label, dt_menus_t menu_index,
+                                GtkMenu *parent, void *data,
+                                gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable,
+                                                            guint keyval, GdkModifierType mods, gpointer user_data),
+                                gboolean (*checked_callback)(GtkWidget *widget),
+                                gboolean (*active_callback)(GtkWidget *widget),
+                                gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val,
+                                GdkModifierType mods, GtkAccelGroup *accel_group);
+
+void update_entry(dt_menu_entry_t *entry);
+void update_menu_entries(GtkWidget *widget, gpointer user_data);
+
+// Use for first-level entries in any menubar
+void add_generic_top_menu_entry(GtkWidget *menu_bar, GtkWidget **menus, GList **lists, const dt_menus_t index,
+                                gchar *label, GtkAccelGroup *accel_group, const char *accel_path_prefix);
+
+
+// Use for first-level entries in the global menubar
+void add_top_menu_entry(GtkWidget *menu_bar, GtkWidget **menus, GList **lists, const dt_menus_t index,
+                        gchar *label);
+
+// Special submenus entries that only open a sub-submenu
+void add_generic_top_submenu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index,
+                                   GtkAccelGroup *accel_group);
+
+// Global menu only
+void add_top_submenu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index);
+void add_generic_top_submenu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index,
+                                   GtkAccelGroup *accel_group);
+
+void add_generic_sub_menu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index,
+                                void *data,
+                                gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable,
+                                                            guint keyval, GdkModifierType mods, gpointer user_data),
+                                gboolean (*checked_callback)(GtkWidget *widget),
+                                gboolean (*active_callback)(GtkWidget *widget),
+                                gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val,
+                                GdkModifierType mods, GtkAccelGroup *accel_group);
+
+void add_sub_menu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index, void *data,
+                        gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable, guint keyval,
+                                                    GdkModifierType mods, gpointer user_data),
+                        gboolean (*checked_callback)(GtkWidget *widget),
+                        gboolean (*active_callback)(GtkWidget *widget),
+                        gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val, GdkModifierType mods);
+
+void add_generic_sub_sub_menu_entry(GtkWidget **menus, GtkWidget *parent, GList **lists, const gchar *label,
+                                    const dt_menus_t index, void *data,
+                                    gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable,
+                                                                guint keyval, GdkModifierType mods,
+                                                                gpointer user_data),
+                                    gboolean (*checked_callback)(GtkWidget *widget),
+                                    gboolean (*active_callback)(GtkWidget *widget),
+                                    gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val,
+                                    GdkModifierType mods, GtkAccelGroup *accel_group);
+
+// add a submenu entry without a real accel, for when the key shortcut is handled in key_pressed event.
+void add_no_accel_sub_menu_entry(GtkWidget **menus, GList **lists, const gchar *label, const dt_menus_t index,
+                                void *data,
+                                gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable,
+                                                            guint keyval, GdkModifierType mods, gpointer user_data),
+                                gboolean (*checked_callback)(GtkWidget *widget),
+                                gboolean (*active_callback)(GtkWidget *widget),
+                                gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val,
+                                GdkModifierType mods);
+
+void add_sub_sub_menu_entry(GtkWidget **menus, GtkWidget *parent, GList **lists, const gchar *label,
+                            const dt_menus_t index, void *data,
+                            gboolean (*action_callback)(GtkAccelGroup *group, GObject *acceleratable, guint keyval,
+                                                        GdkModifierType mods, gpointer user_data),
+                            gboolean (*checked_callback)(GtkWidget *widget),
+                            gboolean (*active_callback)(GtkWidget *widget),
+                            gboolean (*sensitive_callback)(GtkWidget *widget), guint key_val,
+                            GdkModifierType mods);
+
+// We don't go further than 3 levels of menus. This is not a Dassault Systems software.
+
+void add_menu_separator(GtkWidget *menu);
+
+void add_sub_menu_separator(GtkWidget *parent);
+
+void *get_custom_data(GtkWidget *widget);
+
+GtkWidget *get_last_widget(GList **list);
+
+gboolean has_selection();
+gboolean has_active_images();
+gboolean _is_lighttable();
+gboolean has_active_image_in_lighttable();
+
+
+void append_display(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_edit(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_file(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_help(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_image(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_run(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_select(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_styles(GtkWidget **menus, GList **lists, const dt_menus_t index);
+void append_views(GtkWidget **menus, GList **lists, const dt_menus_t index);
+
+GtkWidget *ctx_gtk_menu_item_new_with_icon(const char *label, GtkWidget *menu,
+                                           void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                           gpointer user_data, dt_menu_icon_t icon);
+GtkWidget *ctx_gtk_menu_item_new_with_icon_and_shortcut(const char *label, const char *shortcut,
+                                                        GtkWidget *menu,
+                                                        void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                                        gpointer user_data, dt_menu_icon_t icon);
+GtkWidget *ctx_gtk_menu_item_new_with_markup(const char *label, GtkWidget *menu,
+                                             void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                             gpointer user_data);
+GtkWidget *ctx_gtk_menu_item_new_with_markup_and_shortcut(const char *label, const char *shortcut,
+                                                          GtkWidget *menu,
+                                                          void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                                          gpointer user_data);
+GtkWidget *ctx_gtk_menu_item_new_with_markup_and_pixbuf(const char *label, GdkPixbuf *icon,
+                                                        GtkWidget *menu,
+                                                        void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                                        gpointer user_data);
+GtkWidget *ctx_gtk_check_menu_item_new_with_markup(const char *label,
+                                                   GtkWidget *menu,
+                                                   void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                                   gpointer user_data,
+                                                   const gboolean checked,
+                                                   const gboolean show_checkbox);
+GtkWidget *ctx_gtk_check_menu_item_new_with_markup_and_pixbuf(const char *label, GdkPixbuf *icon,
+                                                              GtkWidget *menu,
+                                                              void (*activate_callback)(GtkWidget *widget, gpointer user_data),
+                                                              gpointer user_data,
+                                                              const gboolean checked,
+                                                              const gboolean show_checkbox);
+
+gboolean dt_menu_is_image_in_dev(GList *imgs);
+struct dt_develop_t;
+void dt_menu_apply_dev_history_update(struct dt_develop_t *dev, const gboolean history_inited);
+
+// Helper to wrap (*void)(void) functions into GtkAccel compatible callbacks
+#define MAKE_ACCEL_WRAPPER(cb)                                            \
+static gboolean                                                           \
+cb##__accel (GtkAccelGroup      *group,                                   \
+             GObject            *acceleratable,                           \
+             guint               keyval,                                  \
+             GdkModifierType     mods,                                    \
+             gpointer            user_data)                               \
+{                                                                         \
+    cb();                                                                 \
+    return TRUE;                                                          \
+}
+
+#define GET_ACCEL_WRAPPER(cb) cb##__accel

@@ -1,0 +1,280 @@
+/*
+ *    This file is part of darktable,
+ *    Copyright (C) 2015-2016 Roman Lebedev.
+ *    Copyright (C) 2015-2016 Tobias Ellinghaus.
+ *    Copyright (C) 2020 Pascal Obry.
+ *    Copyright (C) 2022 Aurélien PIERRE.
+ *    Copyright (C) 2022 Martin Bařinka.
+ *    Copyright (C) 2023 Luca Zulberti.
+ *    Copyright (C) 2023 Maurizio Paglia.
+ *    Copyright (C) 2025 starapo7348.
+ *    
+ *    darktable is free software: you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation, either version 3 of the License, or
+ *    (at your option) any later version.
+ *    
+ *    darktable is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *    
+ *    You should have received a copy of the GNU General Public License
+ *    along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <glib/gi18n.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <libsoup/soup.h>
+#include "common/darktable.h"
+#include "common/http_server.h"
+#ifndef LIBSOUP_VERSION_MAJOR
+#error "LIBSOUP_VERSION_MAJOR not defined by CMake"
+#endif
+#if LIBSOUP_VERSION_MAJOR >= 3  
+#define LIBSOUP3
+#else
+#define LIBSOUP2
+#endif
+
+typedef struct _connection_t
+{
+  const char *id;
+  dt_http_server_t *server;
+  dt_http_server_callback callback;
+  gpointer user_data;
+} _connection_t;
+
+static const char reply[]
+    = "<!DOCTYPE html>\n"
+      "<html>\n"
+      "<head>\n"
+      "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n"
+      "<title>%s</title>\n"
+      "<style>\n"
+      "html {\n"
+      "  background-color: #575656;\n"
+      "  font-family: \"Lucida Grande\",Verdana,\"Bitstream Vera Sans\",Arial,sans-serif;\n"
+      "  font-size: 12px;\n"
+      "  padding: 50px 100px 50px 100px;\n"
+      "}\n"
+      "#content {\n"
+      "  background-color: #cfcece;\n"
+      "  border: 1px solid #000;\n"
+      "  padding: 0px 40px 40px 40px;\n"
+      "}\n"
+      "</style>\n"
+      "<script>\n"
+      "  if(window.location.hash && %d) {\n"
+      "    var hash = window.location.hash.substring(1);\n"
+      "    window.location.search = hash;\n"
+      "  }\n"
+      "</script>\n"
+      "</head>\n"
+      "<body><div id=\"content\">\n"
+      "<div style=\"font-size: 42pt; font-weight: bold; color: white; text-align: right;\">%s</div>\n"
+      "%s\n"
+      "</div>\n"
+      "</body>\n"
+      "</html>";
+
+// Libsoup3: Delayed kill helper
+#ifdef LIBSOUP3
+static gboolean _delayed_kill(gpointer user_data)
+{
+  dt_http_server_kill((dt_http_server_t *)user_data);
+  return G_SOURCE_REMOVE;
+}
+#endif
+
+#ifdef LIBSOUP2
+// Libsoup2 callbacks
+static void _request_finished_callback(SoupServer *server, SoupMessage *message, SoupClientContext *client,
+                                       gpointer user_data)
+{
+  dt_http_server_kill((dt_http_server_t *)user_data);
+}
+
+static void _new_connection(SoupServer *server, SoupMessage *msg, const char *path, GHashTable *query,
+                            SoupClientContext *client, gpointer user_data)
+{
+  _connection_t *params = (_connection_t *)user_data;
+  gboolean res = TRUE;
+
+  if(msg->method != SOUP_METHOD_GET)
+  {
+    soup_message_set_status(msg, SOUP_STATUS_NOT_IMPLEMENTED);
+    goto end;
+  }
+
+  char *page_title = g_strdup_printf(_("ansel >> %s"), params->id);
+  const char *title = _(params->id);
+  const char *body = _("<h1>Sorry,</h1><p>something went wrong. Please try again.</p>");
+
+  res = params->callback(query, params->user_data);
+
+  if(res)
+    body = _("<h1>Thank you,</h1><p>everything should have worked, you can <b>close</b> your browser now and "
+             "<b>go back</b> to Ansel.</p>");
+
+  char *resp_body = g_strdup_printf(reply, page_title, res ? 0 : 1, title, body);
+  size_t resp_length = strlen(resp_body);
+  dt_free(page_title);
+
+  soup_message_set_status(msg, SOUP_STATUS_OK);
+  soup_message_set_response(msg, "text/html", SOUP_MEMORY_TAKE, resp_body, resp_length);
+
+end:
+  if(res)
+  {
+    dt_http_server_t *http_server = params->server;
+    soup_server_remove_handler(server, path);
+    g_signal_connect(G_OBJECT(server), "request-finished", G_CALLBACK(_request_finished_callback), http_server);
+  }
+}
+#endif // LIBSOUP2
+
+#ifdef LIBSOUP3
+// Libsoup3 callbacks
+static void _new_connection(SoupServer *server, SoupServerMessage *msg, gpointer user_data)
+{
+  _connection_t *params = (_connection_t *)user_data;
+  
+  if(g_strcmp0(soup_server_message_get_method(msg), SOUP_METHOD_GET) != 0)
+  {
+    soup_server_message_set_status(msg, SOUP_STATUS_NOT_IMPLEMENTED, "Not Implemented");
+    return;
+  }
+
+  GHashTable *query = g_hash_table_new_full(g_str_hash, g_str_equal, dt_free_gpointer, dt_free_gpointer);
+  
+  gboolean res = params->callback(query, params->user_data);
+  g_hash_table_unref(query);
+
+  const char *body = res ? 
+    _("<h1>Thank you,</h1><p>everything should have worked, you can <b>close</b> your browser now and "
+      "<b>go back</b> to Ansel.</p>") :
+    _("<h1>Sorry,</h1><p>something went wrong. Please try again.</p>");
+
+  char *page_title = g_strdup_printf(_("ansel >> %s"), params->id);
+  char *resp_body = g_strdup_printf(reply, page_title, res ? 0 : 1, _(params->id), body);
+  dt_free(page_title);
+
+  soup_server_message_set_status(msg, SOUP_STATUS_OK, "OK");
+  soup_server_message_set_response(msg, "text/html; charset=utf-8", 
+                                  SOUP_MEMORY_TAKE, resp_body, strlen(resp_body));
+
+  if(res)
+    g_timeout_add(100, _delayed_kill, params->server);
+}
+#endif // LIBSOUP3
+
+dt_http_server_t *dt_http_server_create(const int *ports, const int n_ports, const char *id,
+                                        const dt_http_server_callback callback, gpointer user_data)
+{
+  SoupServer *httpserver = NULL;
+  int port = 0;
+
+#ifdef LIBSOUP2
+
+  dt_print(DT_DEBUG_CONTROL, "[http server] using libsoup2\n");
+
+  httpserver = soup_server_new(SOUP_SERVER_SERVER_HEADER, "ansel internal server", NULL);
+  if(IS_NULL_PTR(httpserver))
+  {
+    fprintf(stderr, "error: couldn't create libsoup httpserver\n");
+    return NULL;
+  }
+
+  for(int i = 0; i < n_ports; i++)
+  {
+    port = ports[i];
+    if(soup_server_listen_local(httpserver, port, 0, NULL)) break;
+    port = 0;
+  }
+  if(port == 0)
+  {
+    g_object_unref(httpserver);
+    fprintf(stderr, "error: can't bind to any port from our pool\n");
+    return NULL;
+  }
+
+#ifdef LIBSOUP2
+
+#elif defined(LIBSOUP3)
+
+SoupServerListener *listener = soup_server_get_listener(httpserver);
+if (listener) {
+  GMainContext *ctx = g_main_context_default();
+  soup_server_listener_set_context(listener, ctx);
+}
+soup_server_run(httpserver);
+#endif
+
+#elif defined(LIBSOUP3)
+  // Libsoup3
+  dt_print(DT_DEBUG_CONTROL, "[http server] using libsoup3\n");
+
+  httpserver = soup_server_new("server-header", "ansel internal server", NULL);
+  if(IS_NULL_PTR(httpserver))
+  {
+    fprintf(stderr, "error: couldn't create libsoup httpserver\n");
+    return NULL;
+  }
+
+  for(int i = 0; i < n_ports; i++)
+  {
+    port = ports[i];
+    if(soup_server_listen_local(httpserver, port, SOUP_SERVER_LISTEN_IPV4_ONLY, NULL)) break;
+    port = 0;
+  }
+  if(port == 0)
+  {
+    g_object_unref(httpserver);
+    fprintf(stderr, "error: can't bind to any port from our pool\n");
+    return NULL;
+  }
+#endif
+
+  dt_http_server_t *server = g_new0(dt_http_server_t, 1);
+  server->server = httpserver;
+
+  _connection_t *params = g_new0(_connection_t, 1);
+  params->id = id;
+  params->server = server;
+  params->callback = callback;
+  params->user_data = user_data;
+
+  char *path = g_strdup_printf("/%s", id);
+  server->url = g_strdup_printf("http://localhost:%d%s", port, path);
+
+#ifdef LIBSOUP2
+  soup_server_add_handler(httpserver, path, _new_connection, params, (GDestroyNotify)free);
+#else
+  soup_server_add_early_handler(httpserver, path, (SoupServerCallback)_new_connection, params, (GDestroyNotify)g_free);
+#endif
+
+  dt_free(path);
+
+  dt_print(DT_DEBUG_CONTROL, "[http server] listening on %s\n", server->url);
+  return server;
+}
+
+void dt_http_server_kill(dt_http_server_t *server)
+{
+  if(server && server->server)
+  {
+    soup_server_disconnect(server->server);
+    g_object_unref(server->server);
+    server->server = NULL;
+  }
+  dt_free(server->url);
+  dt_free(server);
+}
+
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on
