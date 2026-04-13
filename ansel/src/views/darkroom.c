@@ -1837,6 +1837,64 @@ static gboolean _agent_chat_apply_operation_range(const GPtrArray *operations,
   return ok;
 }
 
+static gchar *_agent_chat_format_tool_progress_message(const dt_agent_client_progress_t *progress,
+                                                       const guint previous_tool_calls,
+                                                       const guint previous_live_edit_count,
+                                                       const guint live_edit_count)
+{
+  if(!progress || progress->tool_calls_used <= previous_tool_calls)
+    return NULL;
+
+  const guint max_tool_calls = progress->tool_calls_max > 0
+                                 ? progress->tool_calls_max
+                                 : MAX(1u, progress->tool_calls_used);
+  const char *tool_name = progress->last_tool_name;
+  if(!tool_name || !tool_name[0])
+    tool_name = "";
+
+  if(g_strcmp0(tool_name, "get_preview_image") == 0)
+  {
+    return g_strdup_printf(_("Tool %u/%u: checked the latest preview image."),
+                           progress->tool_calls_used,
+                           max_tool_calls);
+  }
+
+  if(g_strcmp0(tool_name, "get_image_state") == 0)
+    return NULL;
+
+  if(g_strcmp0(tool_name, "apply_operations") == 0)
+  {
+    const guint new_edits = live_edit_count > previous_live_edit_count
+                              ? live_edit_count - previous_live_edit_count
+                              : 0;
+    if(new_edits > 0)
+    {
+      return g_strdup_printf(_("Tool %u/%u: applied %u edit%s (%u total)."),
+                             progress->tool_calls_used,
+                             max_tool_calls,
+                             new_edits,
+                             new_edits == 1 ? "" : "s",
+                             live_edit_count);
+    }
+
+    return g_strdup_printf(_("Tool %u/%u: attempted live edits."),
+                           progress->tool_calls_used,
+                           max_tool_calls);
+  }
+
+  if(progress->message && progress->message[0] != '\0')
+  {
+    return g_strdup_printf(_("Tool %u/%u: %s"),
+                           progress->tool_calls_used,
+                           max_tool_calls,
+                           progress->message);
+  }
+
+  return g_strdup_printf(_("Tool %u/%u: completed a tool call."),
+                         progress->tool_calls_used,
+                         max_tool_calls);
+}
+
 static gboolean _agent_chat_submit_request(dt_develop_t *dev,
                                            const char *message_text,
                                            const guint refinement_pass_index,
@@ -1918,9 +1976,14 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
   if(progress->found)
   {
     const guint previous_tool_calls = dev->agent_chat.active_request_tool_calls_used;
+    const guint previous_live_edit_count = dev->agent_chat.active_request_live_applied_count;
     dev->agent_chat.active_request_tool_calls_used = progress->tool_calls_used;
     if(progress->tool_calls_max > 0)
       dev->agent_chat.active_request_tool_calls_max = progress->tool_calls_max;
+
+    const guint live_edit_count = progress->has_response && progress->response.operations
+                                    ? progress->response.operations->len
+                                    : progress->applied_operation_count;
 
     if(progress->has_response && progress->response.operations
        && progress->response.operations->len > dev->agent_chat.active_request_live_applied_count)
@@ -1952,6 +2015,13 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
         dev->agent_chat.pending_mid_turn_render = TRUE;
       dt_agent_execution_report_clear(&live_report);
     }
+
+    g_autofree gchar *tool_progress_message = _agent_chat_format_tool_progress_message(progress,
+                                                                                       previous_tool_calls,
+                                                                                       previous_live_edit_count,
+                                                                                       live_edit_count);
+    if(tool_progress_message && tool_progress_message[0] != '\0')
+      _agent_chat_append_message(dev, _("system"), tool_progress_message);
 
     if(progress->tool_calls_used > previous_tool_calls && progress->last_tool_name
        && progress->last_tool_name[0] != '\0')
