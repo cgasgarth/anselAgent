@@ -4,12 +4,13 @@
   "scripts": {
     "bootstrap": "./scripts/install.sh",
     "agent:eval": "uv run python -c \"from server.evals.harness import main; raise SystemExit(main())\"",
-    "build:serve": "ANSEL_SKIP_CONFIG=1 npm run ansel:build && npm run ansel:start && npm run server:start",
+    "dev": "ANSEL_SKIP_CONFIG=1 npm run ansel:build && npm run ansel:start && npm run server:start",
     "ansel:build": "./scripts/build_ansel_local.sh",
     "ansel:upstream-status": "python3 ./scripts/ansel_upstream.py status",
     "ansel:start": "./scripts/run_ansel_local.sh",
     "ansel:build-and-start": "npm run ansel:build && npm run ansel:start",
     "server:start": "./scripts/run_server.sh",
+    "validate:agent": "./scripts/validate_agent.sh",
     "agent:smoke": "./scripts/agent_exposure_smoke.sh",
     "agent:smoke:multi-turn": "MULTI_TURN_ENABLED=1 EXPECTED_DELTA= EXPECTED_FINAL_EXPOSURE=1.4 EXPECTED_MIN_REFINEMENT_PASSES=2 EXPECTED_MAX_REFINEMENT_PASSES=15 ANSEL_AGENT_TEST_AUTORUN_QUIT_AFTER_MS=5000 ./scripts/agent_exposure_smoke.sh"
   }

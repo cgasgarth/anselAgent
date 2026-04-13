@@ -169,6 +169,18 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/ansel-install-root"
           tar -C "${RUNNER_TEMP}/ansel-install-root" -xf "${RUNNER_TEMP}/ansel-install/ansel-install.tar"
 
+      - name: Run single-turn mock smoke test
+        env:
+          CLEAN_RUNTIME: '1'
+          INSTALL_PREFIX: ${{ runner.temp }}/ansel-install-root/.install-master
+          KEEP_ARTIFACTS: '1'
+          REPORT_FILE: ${{ runner.temp }}/single-turn-report.ini
+          RUNTIME_DIR: ${{ runner.temp }}/ansel-runtime-single
+          SERVER_LOG: ${{ runner.temp }}/single-turn-server.log
+          SKIP_BUILD: '1'
+          SKIP_SERVER_TESTS: '1'
+        run: npm run agent:smoke
+
       - name: Run multi-turn mock smoke test
         env:
           CLEAN_RUNTIME: '1'
@@ -181,12 +193,14 @@ jobs:
           SKIP_SERVER_TESTS: '1'
         run: npm run agent:smoke:multi-turn
 
-      - name: Upload multi-turn mock smoke artifacts
+      - name: Upload mock smoke artifacts
         if: always()
         uses: actions/upload-artifact@v7.0.0
         with:
-          name: multi-turn-mock-e2e-artifacts
+          name: mock-e2e-artifacts
           retention-days: 7
           path: |
+            ${{ runner.temp }}/single-turn-report.ini
+            ${{ runner.temp }}/single-turn-server.log
             ${{ runner.temp }}/multi-turn-report.ini
             ${{ runner.temp }}/multi-turn-server.log
