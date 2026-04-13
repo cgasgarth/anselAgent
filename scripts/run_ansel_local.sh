@@ -55,8 +55,15 @@ cmd=(
 )
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  glib_schemas_dir="$(pkg-config --variable=schemasdir gio-2.0 2>/dev/null || true)"
-  gtk_prefix="$(pkg-config --variable=prefix gtk+-3.0 2>/dev/null || true)"
+  glib_prefix="$(brew --prefix glib 2>/dev/null || true)"
+  gtk_prefix="$(brew --prefix gtk+3 2>/dev/null || true)"
+  glib_schemas_dir=""
+
+  if [[ -n "$glib_prefix" && -d "$glib_prefix/share/glib-2.0/schemas" ]]; then
+    glib_schemas_dir="$glib_prefix/share/glib-2.0/schemas"
+  else
+    glib_schemas_dir="$(pkg-config --variable=schemasdir gio-2.0 2>/dev/null || true)"
+  fi
 
   if [[ -n "$glib_schemas_dir" && -d "$glib_schemas_dir" ]]; then
     export GSETTINGS_SCHEMA_DIR="$glib_schemas_dir"
@@ -64,6 +71,10 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 
   if [[ -n "$gtk_prefix" && -d "$gtk_prefix/share" ]]; then
     export XDG_DATA_DIRS="$gtk_prefix/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+  fi
+
+  if [[ -n "$glib_prefix" && -d "$glib_prefix/share" ]] && [[ ":${XDG_DATA_DIRS:-}:" != *":$glib_prefix/share:"* ]]; then
+    export XDG_DATA_DIRS="$glib_prefix/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
   fi
 fi
 
