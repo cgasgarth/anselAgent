@@ -272,7 +272,10 @@ def _bind_grade(
             setting = _find_setting(
                 settings,
                 kind="set-float",
-                exact_action_paths=("iop/colorbalancergb/global_saturation",),
+                exact_action_paths=(
+                    "iop/colorbalancergb/global_saturation",
+                    "iop/colorequal/sat_global",
+                ),
                 action_keywords=("saturation",),
                 label_keywords=("saturation",),
             )
@@ -280,6 +283,8 @@ def _bind_grade(
             setting = _find_setting(
                 settings,
                 kind="set-float",
+                exact_action_paths=("iop/colorequal/sat_blue",),
+                module_ids=("colorequal",),
                 action_keywords=("blue", "saturation"),
                 label_keywords=("blue", "saturation"),
             )
@@ -287,6 +292,8 @@ def _bind_grade(
             setting = _find_setting(
                 settings,
                 kind="set-float",
+                exact_action_paths=("iop/primaries/red_hue",),
+                module_ids=("primaries",),
                 action_keywords=("red", "hue"),
                 label_keywords=("red", "hue"),
             )

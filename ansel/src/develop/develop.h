@@ -456,6 +456,7 @@ typedef struct dt_develop_t
     dt_agent_client_request_t *active_request;
     int32_t current_image_id;
     gboolean is_loading;
+    gboolean pending_mid_turn_render;
     guint active_request_live_applied_count;
     guint active_request_tool_calls_used;
     guint active_request_tool_calls_max;

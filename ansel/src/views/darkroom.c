@@ -100,6 +100,7 @@
 #endif
 #include "common/collection.h"
 #include "common/colorspaces.h"
+#include "common/curl_tools.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "common/file_location.h"
@@ -150,6 +151,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <curl/curl.h>
 
 #ifndef G_SOURCE_FUNC // Defined for glib >= 2.58
 #define G_SOURCE_FUNC(f) ((GSourceFunc) (void (*)(void)) (f))
@@ -170,6 +172,7 @@ static void _update_softproof_gamut_checking(dt_develop_t *d);
 /* signal handler for filmstrip image switching */
 static void _view_darkroom_filmstrip_activate_callback(gpointer instance, int32_t imgid, gpointer user_data);
 static void _darkroom_image_loaded_callback(gpointer instance, guint request_id, guint result, gpointer user_data);
+static void _darkroom_ui_pipe_finish_signal_callback(gpointer instance, gpointer user_data);
 
 static void _dev_change_image(dt_view_t *self, const int32_t imgid);
 
@@ -201,11 +204,21 @@ typedef struct dt_agent_chat_submission_t
   guint refinement_max_passes;
 } dt_agent_chat_submission_t;
 
+typedef struct dt_agent_chat_render_delivery_t
+{
+  gchar *image_session_id;
+  gchar *turn_id;
+  guchar *jpeg_bytes;
+  gsize jpeg_len;
+  gchar *endpoint;
+} dt_agent_chat_render_delivery_t;
+
 static gboolean _agent_chat_submit_request(dt_develop_t *dev,
                                            const char *message_text,
                                            guint refinement_pass_index,
                                            guint refinement_max_passes,
                                            gboolean append_user_message);
+static void _agent_chat_encode_and_post_preview(dt_develop_t *dev);
 static gboolean _agent_chat_apply_operation_range(const GPtrArray *operations,
                                                   guint start_index,
                                                   dt_agent_execution_report_t *execution_report,
@@ -1302,6 +1315,25 @@ static void _darkroom_image_loaded_callback(gpointer instance, guint request_id,
   dt_dev_start_all_pipelines(dev);
 }
 
+static void _darkroom_ui_pipe_finish_signal_callback(gpointer instance, gpointer user_data)
+{
+  dt_view_t *self = (dt_view_t *)user_data;
+  (void)instance;
+  if(!self || !self->data)
+    return;
+
+  dt_develop_t *dev = (dt_develop_t *)self->data;
+  dt_control_queue_redraw_center();
+
+#if HAVE_ANSEL_AGENT_CHAT_BACKEND
+  if(dev->agent_chat.pending_mid_turn_render && dev->agent_chat.active_request_id)
+  {
+    _agent_chat_encode_and_post_preview(dev);
+    dev->agent_chat.pending_mid_turn_render = FALSE;
+  }
+#endif
+}
+
 int try_enter(dt_view_t *self)
 {
   uint32_t num_selected = dt_selection_get_length(darktable.selection);
@@ -1533,6 +1565,107 @@ static void _agent_chat_set_loading(dt_develop_t *dev, gboolean is_loading)
 }
 
 #if HAVE_ANSEL_AGENT_CHAT_BACKEND
+static void _render_delivery_free(dt_agent_chat_render_delivery_t *delivery)
+{
+  if(!delivery)
+    return;
+
+  g_free(delivery->image_session_id);
+  g_free(delivery->turn_id);
+  g_free(delivery->jpeg_bytes);
+  g_free(delivery->endpoint);
+  g_free(delivery);
+}
+
+static gpointer _render_post_thread(gpointer user_data)
+{
+  dt_agent_chat_render_delivery_t *delivery = user_data;
+
+  if(!delivery->jpeg_bytes || delivery->jpeg_len == 0)
+  {
+    _render_delivery_free(delivery);
+    return NULL;
+  }
+
+  g_autofree gchar *render_endpoint = g_str_has_suffix(delivery->endpoint, "/")
+                                        ? g_strconcat(delivery->endpoint, "render", NULL)
+                                        : g_strconcat(delivery->endpoint, "/render", NULL);
+
+  CURL *curl = curl_easy_init();
+  if(!curl)
+  {
+    _render_delivery_free(delivery);
+    return NULL;
+  }
+
+  g_autofree gchar *session_header
+    = g_strdup_printf("X-Darktable-Image-Session-Id: %s",
+                      delivery->image_session_id ? delivery->image_session_id : "");
+  g_autofree gchar *turn_header
+    = g_strdup_printf("X-Darktable-Turn-Id: %s",
+                      delivery->turn_id ? delivery->turn_id : "");
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, "Content-Type: image/jpeg");
+  headers = curl_slist_append(headers, session_header);
+  headers = curl_slist_append(headers, turn_header);
+
+  dt_curl_init(curl, FALSE);
+  curl_easy_setopt(curl, CURLOPT_URL, render_endpoint);
+  curl_easy_setopt(curl, CURLOPT_POST, 1L);
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDS, delivery->jpeg_bytes);
+  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)delivery->jpeg_len);
+  curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+
+  curl_easy_perform(curl);
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+  _render_delivery_free(delivery);
+  return NULL;
+}
+
+static void _agent_chat_encode_and_post_preview(dt_develop_t *dev)
+{
+  if(!dev || !dev->agent_chat.image_session_id || !dev->agent_chat.active_request_id)
+    return;
+
+  dt_agent_image_state_t state;
+  dt_agent_image_state_init(&state);
+
+  GError *error = NULL;
+  if(dt_agent_image_state_collect_from_dev(dev, &state, &error))
+  {
+    if(state.preview.available && state.preview.base64_data)
+    {
+      gsize decoded_len = 0;
+      guchar *decoded = g_base64_decode(state.preview.base64_data, &decoded_len);
+      if(decoded && decoded_len > 0)
+      {
+        dt_agent_chat_render_delivery_t *delivery = g_new0(dt_agent_chat_render_delivery_t, 1);
+        delivery->image_session_id = g_strdup(dev->agent_chat.image_session_id);
+        delivery->turn_id = g_strdup(dev->agent_chat.active_request_id);
+        delivery->jpeg_bytes = decoded;
+        delivery->jpeg_len = decoded_len;
+        delivery->endpoint = dt_agent_client_dup_endpoint();
+        g_thread_unref(g_thread_new("agent-chat-render", _render_post_thread, delivery));
+      }
+      else
+      {
+        g_free(decoded);
+      }
+    }
+  }
+  else
+  {
+    g_clear_error(&error);
+  }
+
+  dt_agent_image_state_clear(&state);
+}
+
 static void _agent_chat_submission_free(gpointer data)
 {
   dt_agent_chat_submission_t *submission = (dt_agent_chat_submission_t *)data;
@@ -1582,6 +1715,7 @@ static void _agent_chat_set_active_request(dt_develop_t *dev,
   g_free(dev->agent_chat.active_request_id);
   dev->agent_chat.active_request_id = g_strdup(request_id);
   dev->agent_chat.active_request = request;
+  dev->agent_chat.pending_mid_turn_render = FALSE;
   dev->agent_chat.active_request_live_applied_count = 0;
   dev->agent_chat.active_request_tool_calls_used = 0;
   dev->agent_chat.active_request_tool_calls_max = 0;
@@ -1594,6 +1728,7 @@ static void _agent_chat_clear_active_request(dt_develop_t *dev)
 
   _agent_chat_drop_active_request_handle(dev);
   g_clear_pointer(&dev->agent_chat.active_request_id, g_free);
+  dev->agent_chat.pending_mid_turn_render = FALSE;
   dev->agent_chat.active_request_live_applied_count = 0;
   dev->agent_chat.active_request_tool_calls_used = 0;
   dev->agent_chat.active_request_tool_calls_max = 0;
@@ -1813,6 +1948,8 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
       dt_dev_pop_history_items(dev);
       dt_dev_history_gui_update(dev);
       dt_control_queue_redraw_center();
+      if(progress->requires_render_callback)
+        dev->agent_chat.pending_mid_turn_render = TRUE;
       dt_agent_execution_report_clear(&live_report);
     }
 
@@ -1972,6 +2109,7 @@ static void _agent_chat_cancel_active_request(dt_develop_t *dev, const char *sta
   dev->agent_chat.active_request_live_applied_count = 0;
   dev->agent_chat.active_request_tool_calls_used = 0;
   dev->agent_chat.active_request_tool_calls_max = 0;
+  dev->agent_chat.pending_mid_turn_render = FALSE;
   if(dev->agent_chat.is_loading)
     _agent_chat_set_loading(dev, FALSE);
   if(status_text)
@@ -3134,6 +3272,8 @@ void enter(dt_view_t *self)
                                   G_CALLBACK(_view_darkroom_filmstrip_activate_callback), self);
   DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_IMAGE_CHANGED,
                                   G_CALLBACK(_agent_chat_image_changed_callback), self);
+  DT_DEBUG_CONTROL_SIGNAL_CONNECT(darktable.signals, DT_SIGNAL_DEVELOP_UI_PIPE_FINISHED,
+                                  G_CALLBACK(_darkroom_ui_pipe_finish_signal_callback), self);
 
   gtk_widget_grab_focus(dt_ui_center(darktable.gui->ui)); // ensure the center view has focus for keybindings to work
 
@@ -3194,6 +3334,8 @@ void leave(dt_view_t *self)
   DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_view_darkroom_filmstrip_activate_callback),
   (gpointer)self);
   DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_agent_chat_image_changed_callback),
+  (gpointer)self);
+  DT_DEBUG_CONTROL_SIGNAL_DISCONNECT(darktable.signals, G_CALLBACK(_darkroom_ui_pipe_finish_signal_callback),
   (gpointer)self);
 
   dt_iop_color_picker_cleanup();

@@ -1,9 +1,13 @@
 #include "common/agent_state.h"
 
 #include "common/agent_catalog.h"
+#include "common/colorspaces.h"
+#include "common/imageio.h"
+#include "common/imageio_module.h"
 #include "develop/develop.h"
 #include "develop/dev_history.h"
 
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -12,9 +16,57 @@ typedef enum dt_agent_state_error_t
   DT_AGENT_STATE_ERROR_INVALID = 1,
 } dt_agent_state_error_t;
 
+typedef struct dt_agent_memory_format_t
+{
+  dt_imageio_module_data_t head;
+  float *buf;
+} dt_agent_memory_format_t;
+
 static GQuark _agent_state_error_quark(void)
 {
   return g_quark_from_static_string("dt-agent-state-error");
+}
+
+static const char *_memory_mime(dt_imageio_module_data_t *data)
+{
+  return "memory";
+}
+
+static int _memory_levels(dt_imageio_module_data_t *data)
+{
+  return IMAGEIO_RGB | IMAGEIO_FLOAT;
+}
+
+static int _memory_bpp(dt_imageio_module_data_t *data)
+{
+  return 32;
+}
+
+static int _memory_write_image(dt_imageio_module_data_t *data,
+                               const char *filename,
+                               const void *in,
+                               dt_colorspaces_color_profile_type_t over_type,
+                               const char *over_filename,
+                               void *exif,
+                               const int exif_len,
+                               const int32_t imgid,
+                               const int num,
+                               const int total,
+                               dt_dev_pixelpipe_t *pipe,
+                               const gboolean export_masks)
+{
+  dt_agent_memory_format_t *format = (dt_agent_memory_format_t *)data;
+  format->buf = malloc(sizeof(float) * 4 * format->head.width * format->head.height);
+  if(!format->buf)
+    return 1;
+
+  memcpy(format->buf, in, sizeof(float) * 4 * format->head.width * format->head.height);
+  return 0;
+}
+
+static void _preview_pixels_destroy(guchar *pixels, gpointer data)
+{
+  g_free(pixels);
 }
 
 static void _agent_image_control_free(gpointer data)
@@ -240,6 +292,16 @@ static void _collect_controls(const dt_develop_t *dev, dt_agent_image_state_t *s
     {
       case DT_AGENT_OPERATION_SET_FLOAT:
         control->has_current_number = dt_agent_catalog_read_current_number(descriptor, &control->current_number, NULL);
+        if(control->has_current_number
+           && !(control->current_number == control->current_number
+                && control->current_number <= G_MAXDOUBLE
+                && control->current_number >= -G_MAXDOUBLE))
+          control->has_current_number = FALSE;
+        if(!control->has_current_number)
+        {
+          _agent_image_control_free(control);
+          continue;
+        }
         break;
       case DT_AGENT_OPERATION_SET_CHOICE:
         control->has_current_choice_value = dt_agent_catalog_read_current_choice(
@@ -247,6 +309,11 @@ static void _collect_controls(const dt_develop_t *dev, dt_agent_image_state_t *s
         break;
       case DT_AGENT_OPERATION_SET_BOOL:
         control->has_current_bool = dt_agent_catalog_read_current_bool(descriptor, &control->current_bool, NULL);
+        if(!control->has_current_bool)
+        {
+          _agent_image_control_free(control);
+          continue;
+        }
         break;
       case DT_AGENT_OPERATION_UNKNOWN:
       default:
@@ -280,6 +347,148 @@ static void _collect_history(const dt_develop_t *dev, dt_agent_image_state_t *st
   }
 }
 
+static void _collect_histogram_from_buffer(dt_agent_image_state_t *state,
+                                           const float *buf,
+                                           const gint width,
+                                           const gint height)
+{
+  if(!buf || width <= 0 || height <= 0)
+    return;
+
+  state->histogram.available = TRUE;
+  state->histogram.bin_count = 256;
+
+  const gint pixels = width * height;
+  for(gint i = 0; i < pixels; i++)
+  {
+    const float red = CLAMPS(buf[4 * i + 0], 0.0f, 1.0f);
+    const float green = CLAMPS(buf[4 * i + 1], 0.0f, 1.0f);
+    const float blue = CLAMPS(buf[4 * i + 2], 0.0f, 1.0f);
+    const float luma = CLAMPS(0.2126f * red + 0.7152f * green + 0.0722f * blue, 0.0f, 1.0f);
+
+    const gint red_bin = CLAMP((gint)lrintf(red * 255.0f), 0, 255);
+    const gint green_bin = CLAMP((gint)lrintf(green * 255.0f), 0, 255);
+    const gint blue_bin = CLAMP((gint)lrintf(blue * 255.0f), 0, 255);
+    const gint luma_bin = CLAMP((gint)lrintf(luma * 255.0f), 0, 255);
+
+    state->histogram.red[red_bin]++;
+    state->histogram.green[green_bin]++;
+    state->histogram.blue[blue_bin]++;
+    state->histogram.luma[luma_bin]++;
+  }
+}
+
+static void _collect_preview_from_pixbuf(dt_agent_image_state_t *state,
+                                         const dt_develop_t *dev,
+                                         GdkPixbuf *pixbuf)
+{
+  if(!pixbuf || !state->metadata.has_image_id)
+    return;
+
+  gchar *jpeg_data = NULL;
+  gsize jpeg_size = 0;
+  GError *save_error = NULL;
+  if(!gdk_pixbuf_save_to_buffer(pixbuf,
+                                &jpeg_data,
+                                &jpeg_size,
+                                "jpeg",
+                                &save_error,
+                                "quality",
+                                "85",
+                                NULL))
+  {
+    g_clear_error(&save_error);
+    return;
+  }
+
+  state->preview.available = TRUE;
+  state->preview.preview_id = g_strdup_printf("preview-%" G_GINT64_FORMAT "-history-%d",
+                                              state->metadata.image_id,
+                                              dev->history_end);
+  state->preview.mime_type = g_strdup("image/jpeg");
+  state->preview.width = gdk_pixbuf_get_width(pixbuf);
+  state->preview.height = gdk_pixbuf_get_height(pixbuf);
+  state->preview.base64_data = g_base64_encode((const guchar *)jpeg_data, jpeg_size);
+  g_free(jpeg_data);
+}
+
+static void _snapshot_from_export_fallback(const dt_develop_t *dev, dt_agent_image_state_t *state)
+{
+  if(!state->metadata.has_image_id)
+    return;
+
+  dt_imageio_module_format_t format = { 0 };
+  dt_agent_memory_format_t memory = { 0 };
+  dt_atomic_int shutdown = 0;
+  format.bpp = _memory_bpp;
+  format.write_image = _memory_write_image;
+  format.levels = _memory_levels;
+  format.mime = _memory_mime;
+  memory.head.max_width = 1000;
+  memory.head.max_height = 1000;
+  memory.head.style[0] = '\0';
+
+  if(dt_imageio_export_with_flags(state->metadata.image_id,
+                                  "unused",
+                                  &format,
+                                  (dt_imageio_module_data_t *)&memory,
+                                  TRUE,
+                                  FALSE,
+                                  FALSE,
+                                  FALSE,
+                                  FALSE,
+                                  NULL,
+                                  FALSE,
+                                  FALSE,
+                                  DT_COLORSPACE_SRGB,
+                                  NULL,
+                                  DT_INTENT_PERCEPTUAL,
+                                  NULL,
+                                  NULL,
+                                  1,
+                                  1,
+                                  NULL,
+                                  &shutdown))
+  {
+    return;
+  }
+
+  _collect_histogram_from_buffer(state, memory.buf, memory.head.width, memory.head.height);
+  if(memory.buf && memory.head.width > 0 && memory.head.height > 0)
+  {
+    const gint width = memory.head.width;
+    const gint height = memory.head.height;
+    guchar *pixels = g_malloc((size_t)width * height * 3);
+    for(gint i = 0; i < width * height; i++)
+    {
+      pixels[3 * i + 0] = CLAMP((gint)lrintf(CLAMPS(memory.buf[4 * i + 0], 0.0f, 1.0f) * 255.0f), 0, 255);
+      pixels[3 * i + 1] = CLAMP((gint)lrintf(CLAMPS(memory.buf[4 * i + 1], 0.0f, 1.0f) * 255.0f), 0, 255);
+      pixels[3 * i + 2] = CLAMP((gint)lrintf(CLAMPS(memory.buf[4 * i + 2], 0.0f, 1.0f) * 255.0f), 0, 255);
+    }
+
+    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_data(pixels,
+                                                 GDK_COLORSPACE_RGB,
+                                                 FALSE,
+                                                 8,
+                                                 width,
+                                                 height,
+                                                 width * 3,
+                                                 _preview_pixels_destroy,
+                                                 NULL);
+    if(pixbuf)
+    {
+      _collect_preview_from_pixbuf(state, dev, pixbuf);
+      g_object_unref(pixbuf);
+    }
+    else
+    {
+      g_free(pixels);
+    }
+  }
+
+  free(memory.buf);
+}
+
 gboolean dt_agent_image_state_collect_from_dev(const dt_develop_t *dev,
                                                dt_agent_image_state_t *state,
                                                GError **error)
@@ -296,5 +505,6 @@ gboolean dt_agent_image_state_collect_from_dev(const dt_develop_t *dev,
   _collect_metadata(dev, state);
   _collect_controls(dev, state);
   _collect_history(dev, state);
+  _snapshot_from_export_fallback(dev, state);
   return TRUE;
 }

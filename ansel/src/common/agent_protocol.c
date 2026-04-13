@@ -291,6 +291,24 @@ static void _serialize_choice_options(JsonBuilder *builder, const GPtrArray *cho
   json_builder_end_array(builder);
 }
 
+static gboolean _is_json_finite(double value)
+{
+  return value == value && value <= G_MAXDOUBLE && value >= -G_MAXDOUBLE;
+}
+
+static void _add_finite_double_or_fallback(JsonBuilder *builder, double value, double fallback)
+{
+  json_builder_add_double_value(builder, _is_json_finite(value) ? value : fallback);
+}
+
+static void _add_optional_finite_double(JsonBuilder *builder, double value, gboolean present)
+{
+  if(present && _is_json_finite(value))
+    json_builder_add_double_value(builder, value);
+  else
+    json_builder_add_null_value(builder);
+}
+
 static void _serialize_capabilities(JsonBuilder *builder, const GPtrArray *capabilities)
 {
   json_builder_begin_array(builder);
@@ -429,13 +447,13 @@ static void _serialize_image_snapshot(JsonBuilder *builder,
   json_builder_set_member_name(builder, "height");
   json_builder_add_int_value(builder, state->metadata.height);
   json_builder_set_member_name(builder, "exifExposureSeconds");
-  json_builder_add_double_value(builder, state->metadata.exif_exposure_seconds);
+  _add_finite_double_or_fallback(builder, state->metadata.exif_exposure_seconds, 0.0);
   json_builder_set_member_name(builder, "exifAperture");
-  json_builder_add_double_value(builder, state->metadata.exif_aperture);
+  _add_finite_double_or_fallback(builder, state->metadata.exif_aperture, 0.0);
   json_builder_set_member_name(builder, "exifIso");
-  json_builder_add_double_value(builder, state->metadata.exif_iso);
+  _add_finite_double_or_fallback(builder, state->metadata.exif_iso, 0.0);
   json_builder_set_member_name(builder, "exifFocalLength");
-  json_builder_add_double_value(builder, state->metadata.exif_focal_length);
+  _add_finite_double_or_fallback(builder, state->metadata.exif_focal_length, 0.0);
   json_builder_end_object(builder);
 
   json_builder_set_member_name(builder, "editableSettings");
@@ -493,10 +511,7 @@ static void _serialize_image_snapshot(JsonBuilder *builder,
       json_builder_add_null_value(builder);
 
     json_builder_set_member_name(builder, "currentNumber");
-    if(control->has_current_number)
-      json_builder_add_double_value(builder, control->current_number);
-    else
-      json_builder_add_null_value(builder);
+    _add_optional_finite_double(builder, control->current_number, control->has_current_number);
     json_builder_set_member_name(builder, "choices");
     _serialize_choice_options(builder, control->choices);
     json_builder_set_member_name(builder, "defaultChoiceValue");

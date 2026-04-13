@@ -6,7 +6,6 @@
 #include "develop/imageop.h"
 
 #include <glib/gi18n.h>
-#include <math.h>
 #include <string.h>
 
 typedef enum dt_agent_catalog_error_t
@@ -96,6 +95,37 @@ static gboolean _is_numeric_type(const dt_introspection_type_t type)
     default:
       return FALSE;
   }
+}
+
+static gboolean _number_range_is_finite(double min_number,
+                                        double max_number,
+                                        double default_number,
+                                        double step_number)
+{
+  return min_number == min_number && max_number == max_number
+      && default_number == default_number && step_number == step_number
+      && min_number <= G_MAXDOUBLE && min_number >= -G_MAXDOUBLE
+      && max_number <= G_MAXDOUBLE && max_number >= -G_MAXDOUBLE
+      && default_number <= G_MAXDOUBLE && default_number >= -G_MAXDOUBLE
+      && step_number <= G_MAXDOUBLE && step_number >= -G_MAXDOUBLE
+      && step_number > 0.0;
+}
+
+static void _normalize_number_range(double *min_number,
+                                    double *max_number,
+                                    double *default_number)
+{
+  if(*min_number > *max_number)
+  {
+    const double swapped = *min_number;
+    *min_number = *max_number;
+    *max_number = swapped;
+  }
+
+  if(*default_number < *min_number)
+    *default_number = *min_number;
+  else if(*default_number > *max_number)
+    *default_number = *max_number;
 }
 
 static gboolean _read_number_from_field(const dt_introspection_field_t *field,
@@ -273,14 +303,27 @@ static dt_agent_action_descriptor_t *_build_descriptor(dt_iop_module_t *module, 
   if(bhw->type == DT_BAUHAUS_SLIDER && _is_numeric_type(field->header.type))
   {
     const dt_bauhaus_slider_data_t *slider = &bhw->data.slider;
+    double min_number = slider->hard_min;
+    double max_number = slider->hard_max;
+    double default_number = slider->defpos;
+    const double step_number = dt_bauhaus_slider_get_step(widget);
+
+    _normalize_number_range(&min_number, &max_number, &default_number);
+
+    if(!_number_range_is_finite(min_number, max_number, default_number, step_number))
+    {
+      dt_agent_action_descriptor_free(descriptor);
+      return NULL;
+    }
+
     descriptor->operation_kind = DT_AGENT_OPERATION_SET_FLOAT;
     descriptor->kind_name = g_strdup(dt_agent_operation_kind_to_string(descriptor->operation_kind));
     descriptor->supported_modes = DT_AGENT_VALUE_MODE_FLAG_SET | DT_AGENT_VALUE_MODE_FLAG_DELTA;
     descriptor->has_number_range = TRUE;
-    descriptor->min_number = slider->hard_min;
-    descriptor->max_number = slider->hard_max;
-    descriptor->default_number = slider->defpos;
-    descriptor->step_number = dt_bauhaus_slider_get_step(widget);
+    descriptor->min_number = min_number;
+    descriptor->max_number = max_number;
+    descriptor->default_number = default_number;
+    descriptor->step_number = step_number;
     return descriptor;
   }
 
@@ -373,6 +416,7 @@ gboolean dt_agent_catalog_collect_descriptors(const struct dt_develop_t *dev,
   }
 
   g_ptr_array_set_size(descriptors, 0);
+  g_autoptr(GHashTable) seen_capability_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   for(const GList *module_iter = dev->iop; module_iter; module_iter = g_list_next(module_iter))
   {
@@ -386,7 +430,16 @@ gboolean dt_agent_catalog_collect_descriptors(const struct dt_develop_t *dev,
       GtkWidget *widget = widget_iter->data;
       dt_agent_action_descriptor_t *descriptor = _build_descriptor(module, widget);
       if(descriptor)
+      {
+        if(g_hash_table_contains(seen_capability_ids, descriptor->capability_id))
+        {
+          dt_agent_action_descriptor_free(descriptor);
+          continue;
+        }
+
+        g_hash_table_add(seen_capability_ids, g_strdup(descriptor->capability_id));
         g_ptr_array_add(descriptors, descriptor);
+      }
     }
   }
 
