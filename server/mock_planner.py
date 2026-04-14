@@ -264,14 +264,20 @@ class MockPlannerBridge:
         return {
             "found": False,
             "status": "not_found",
+            "phase": "not_found",
             "message": "No active request found for that requestId.",
             "toolCallsUsed": 0,
             "maxToolCalls": 0,
             "appliedOperationCount": 0,
             "operations": [],
             "lastToolName": None,
+            "lastActionSummary": None,
+            "lastVerifierSummary": None,
+            "traceSummary": [],
             "progressVersion": 0,
             "requiresRenderCallback": False,
+            "tokenUsageLast": None,
+            "tokenUsageTotal": None,
         }
 
     def provide_render_callback(

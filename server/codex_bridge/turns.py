@@ -204,6 +204,11 @@ class TurnsMixin:
                     message.get("method") or "jsonrpc-response"
                 )
                 self._handle_message_locked(message, state)
+                self._set_active_request_token_usage_locked(
+                    active_request.request_id,
+                    token_usage_last=state["token_usage_last"],
+                    token_usage_total=state["token_usage_total"],
+                )
 
             if state["turn_error"]:
                 raise CodexAppServerError("codex_turn_failed", state["turn_error"])

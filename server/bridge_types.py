@@ -8,14 +8,20 @@ from shared.protocol import AgentPlan, JsonObject, RequestEnvelope
 class RequestProgressPayload(TypedDict):
     found: bool
     status: str
+    phase: str
     toolCallsUsed: int
     maxToolCalls: int
     appliedOperationCount: int
     operations: list[JsonObject]
     message: str
     lastToolName: str | None
+    lastActionSummary: str | None
+    lastVerifierSummary: str | None
+    traceSummary: list[str]
     progressVersion: int
     requiresRenderCallback: bool
+    tokenUsageLast: JsonObject | None
+    tokenUsageTotal: JsonObject | None
 
 
 class PlannerTurnResult(Protocol):

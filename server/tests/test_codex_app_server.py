@@ -1593,14 +1593,20 @@ def test_get_request_progress_returns_not_found_for_unknown_request() -> None:
     assert progress == {
         "found": False,
         "status": "not_found",
+        "phase": "not_found",
         "toolCallsUsed": 0,
         "maxToolCalls": 0,
         "appliedOperationCount": 0,
         "operations": [],
         "message": "No active request found for that requestId.",
         "lastToolName": None,
+        "lastActionSummary": None,
+        "lastVerifierSummary": None,
+        "traceSummary": [],
         "progressVersion": 0,
         "requiresRenderCallback": False,
+        "tokenUsageLast": None,
+        "tokenUsageTotal": None,
     }
 
 
@@ -1648,12 +1654,18 @@ def test_get_request_progress_returns_live_applied_operations_for_active_turn() 
         )
         assert progress["found"] is True
         assert progress["status"] == "running"
+        assert progress["phase"] == "running"
         assert progress["toolCallsUsed"] == 3
         assert progress["maxToolCalls"] == bridge._effective_tool_budget(request)
         assert progress["appliedOperationCount"] == 1
         assert len(progress["operations"]) == 1
         assert progress["lastToolName"] is None
+        assert progress["lastActionSummary"] is None
+        assert progress["lastVerifierSummary"] is None
+        assert progress["traceSummary"] == ["Waiting for Codex turn output"]
         assert progress["progressVersion"] == 0
+        assert progress["tokenUsageLast"] is None
+        assert progress["tokenUsageTotal"] is None
     finally:
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
         bridge._unregister_request(request.requestId)  # type: ignore[attr-defined]
@@ -1915,8 +1927,60 @@ def test_playbook_tool_updates_request_progress_with_selected_playbook(
         assert progress["found"] is True
         assert progress["lastToolName"] == _TOOL_GET_PLAYBOOK
         assert progress["message"] == "Using playbook portrait."
+        assert progress["traceSummary"] == [
+            "Using playbook portrait.",
+            f"Last tool: {_TOOL_GET_PLAYBOOK}",
+        ]
     finally:
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        bridge._unregister_request(request.requestId)  # type: ignore[attr-defined]
+
+
+def test_token_usage_updates_request_progress_metadata() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    active_request = bridge._register_request(request)  # type: ignore[attr-defined]
+    try:
+        bridge._set_active_request_token_usage_locked(  # type: ignore[attr-defined]
+            request.requestId,
+            token_usage_last={
+                "inputTokens": 200,
+                "outputTokens": 50,
+                "reasoningOutputTokens": 25,
+                "totalTokens": 250,
+            },
+            token_usage_total={
+                "inputTokens": 400,
+                "outputTokens": 80,
+                "reasoningOutputTokens": 30,
+                "totalTokens": 480,
+            },
+        )
+
+        progress = bridge.get_request_progress(
+            request_id=request.requestId,
+            app_session_id=request.session.appSessionId,
+            image_session_id=request.session.imageSessionId,
+            conversation_id=request.session.conversationId,
+            turn_id=request.session.turnId,
+        )
+
+        assert progress["tokenUsageLast"] == {
+            "inputTokens": 200,
+            "outputTokens": 50,
+            "reasoningOutputTokens": 25,
+            "totalTokens": 250,
+        }
+        assert progress["tokenUsageTotal"] == {
+            "inputTokens": 400,
+            "outputTokens": 80,
+            "reasoningOutputTokens": 30,
+            "totalTokens": 480,
+        }
+        assert active_request.progress_version == 1
+    finally:
         bridge._unregister_request(request.requestId)  # type: ignore[attr-defined]
 
 

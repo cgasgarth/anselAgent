@@ -67,6 +67,53 @@ npm run ansel:start
 
 By default, the backend runs locally on `127.0.0.1:8001`.
 
+## macOS App
+
+Build the native macOS app bundle:
+
+```bash
+npm run ansel:build:macos-bundle
+```
+
+This produces:
+
+```text
+ansel/install/package/Ansel.app
+```
+
+Install it into `/Applications` so it appears in Finder, Launchpad, and Spotlight:
+
+```bash
+cp -R "./ansel/install/package/Ansel.app" /Applications/
+```
+
+If `Ansel.app` already exists in `/Applications`, replace it after rebuilding:
+
+```bash
+rm -rf /Applications/Ansel.app
+cp -R "./ansel/install/package/Ansel.app" /Applications/
+```
+
+Typical update flow after making native Ansel changes:
+
+```bash
+npm run ansel:build:macos-bundle
+rm -rf /Applications/Ansel.app
+cp -R "./ansel/install/package/Ansel.app" /Applications/
+```
+
+Open the installed app with Finder or:
+
+```bash
+open -a /Applications/Ansel.app
+```
+
+The app bundle is just the GUI. For AI agent features, run the local backend separately:
+
+```bash
+npm run server:start
+```
+
 ## Testing
 
 Run the Python test suite:
