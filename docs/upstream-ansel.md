@@ -1,13 +1,30 @@
 # Tracking Upstream Ansel
 
-This repository does not need to be a GitHub fork of `aurelienpierreeng/ansel` to stay aligned with upstream. The source of truth for the vendored Ansel base lives in `ansel-upstream.json`.
+This repository does not need to be a GitHub fork of `aurelienpierreeng/ansel` to stay aligned with upstream. Use a normal git remote named `upstream` for commit-level tracking, and keep `ansel-upstream.json` as the source of truth for the vendored Ansel base.
 
 ## Current baseline
 
 - Upstream repository: `https://github.com/aurelienpierreeng/ansel.git`
+- Recommended git remote: `upstream`
 - Original fork/base tag: `release-4.0.0`
 - Current matched upstream tag: `master`
 - Vendored source path in this repo: `ansel/`
+
+## One-time setup
+
+Add the upstream remote and fetch it:
+
+```bash
+git remote add upstream https://github.com/aurelienpierreeng/ansel.git
+git fetch upstream
+```
+
+After that, inspect upstream changes with normal git commands:
+
+```bash
+git log --oneline --left-right --cherry upstream/master...HEAD
+git diff upstream/master...HEAD
+```
 
 ## How to check our downstream patch surface
 
@@ -48,6 +65,6 @@ Swap in a newer upstream ref when Ansel advances.
 ## Why this workflow
 
 - No GitHub fork relationship is required.
-- No persistent git remote is required for day-to-day tracking.
+- A persistent `upstream` remote makes it easy to inspect and import upstream changes.
 - The upstream baseline stays explicit and reviewable in the repo.
 - Future sync PRs can focus on the small set of files where anselAgent intentionally diverges from upstream.
