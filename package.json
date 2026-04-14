@@ -12,6 +12,7 @@
     "server:start": "./scripts/run_server.sh",
     "validate:agent": "./scripts/validate_agent.sh",
     "agent:smoke": "./scripts/agent_exposure_smoke.sh",
+    "agent:smoke:graph-export": "./scripts/agent_graph_smoke.sh",
     "agent:smoke:multi-turn": "MULTI_TURN_ENABLED=1 EXPECTED_DELTA= EXPECTED_FINAL_EXPOSURE=1.4 EXPECTED_MIN_REFINEMENT_PASSES=2 EXPECTED_MAX_REFINEMENT_PASSES=15 ANSEL_AGENT_TEST_AUTORUN_QUIT_AFTER_MS=5000 ./scripts/agent_exposure_smoke.sh"
   }
 }

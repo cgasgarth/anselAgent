@@ -10,6 +10,7 @@ from typing import cast
 from shared.protocol import AgentPlan, JsonObject, RequestEnvelope
 
 from .config import _DEFAULT_HISTOGRAM_BINS, _DEFAULT_MAX_TOOL_CALLS_WITHOUT_APPLY
+from .edit_graph import build_edit_graph
 from .errors import CodexAppServerError
 from .image_signals import build_image_analysis_signals
 from .intent_router import playbook_catalog_payload
@@ -24,6 +25,82 @@ except Exception:  # pragma: no cover
 
 
 class PromptingMixin:
+    @staticmethod
+    def _is_hidden_crop_property(module_id: object, property_path: object) -> bool:
+        return (
+            isinstance(module_id, str)
+            and module_id in {"clipping", "crop"}
+            and property_path
+            in {"cx", "cy", "cw", "ch", "left", "top", "right", "bottom"}
+        )
+
+    @classmethod
+    def _is_agent_visible_setting(cls, module_id: object, action_path: object) -> bool:
+        if not isinstance(module_id, str):
+            return False
+        if not isinstance(action_path, str):
+            return True
+        return not cls._is_hidden_crop_property(
+            module_id, action_path.rsplit("/", 1)[-1]
+        )
+
+    @classmethod
+    def _filter_edit_graph_payload(cls, edit_graph: JsonObject) -> JsonObject:
+        nodes = edit_graph.get("nodes")
+        if not isinstance(nodes, list):
+            return edit_graph
+
+        filtered_nodes: list[JsonObject] = []
+        allowed_node_ids: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_copy = dict(node)
+            properties = node_copy.get("properties")
+            if isinstance(properties, list):
+                node_copy["properties"] = [
+                    property_payload
+                    for property_payload in properties
+                    if not isinstance(property_payload, dict)
+                    or not cls._is_hidden_crop_property(
+                        node_copy.get("moduleId"),
+                        property_payload.get("rawPropertyPath")
+                        or property_payload.get("propertyPath"),
+                    )
+                ]
+                if (
+                    not node_copy["properties"]
+                    and str(node_copy.get("nodeType")) == "control-group"
+                ):
+                    continue
+            node_id = node_copy.get("nodeId")
+            if isinstance(node_id, str):
+                allowed_node_ids.add(node_id)
+            filtered_nodes.append(cast(JsonObject, node_copy))
+
+        filtered_graph = dict(edit_graph)
+        filtered_graph["nodes"] = filtered_nodes
+        edges = filtered_graph.get("edges")
+        if isinstance(edges, list):
+            filtered_graph["edges"] = [
+                edge
+                for edge in edges
+                if not isinstance(edge, dict)
+                or (
+                    edge.get("fromNodeId") in allowed_node_ids
+                    and edge.get("toNodeId") in allowed_node_ids
+                )
+            ]
+        subgraphs = filtered_graph.get("subgraphs")
+        if isinstance(subgraphs, list):
+            filtered_graph["subgraphs"] = [
+                subgraph
+                for subgraph in subgraphs
+                if not isinstance(subgraph, dict)
+                or subgraph.get("rootNodeId") in allowed_node_ids
+            ]
+        return cast(JsonObject, filtered_graph)
+
     @staticmethod
     def _decode_preview_image(request: RequestEnvelope) -> tuple[str, bytes]:
         preview = request.imageSnapshot.preview
@@ -77,6 +154,7 @@ class PromptingMixin:
         )
         image_snapshot = state_payload.get("imageSnapshot", {})
         editable_settings = image_snapshot.get("editableSettings", [])
+        edit_graph = image_snapshot.get("editGraph", {})
         setting_by_id: dict[str, JsonObject] = {}
         base_float_setting_numbers: dict[str, float] = {}
         if isinstance(editable_settings, list):
@@ -95,6 +173,26 @@ class PromptingMixin:
                                 current_number
                             )
         max_tool_calls = self._effective_tool_budget(request)
+        (
+            graph_payload,
+            graph_property_ref_to_setting_id,
+            graph_property_by_setting_id,
+        ) = build_edit_graph(request)
+        graph_property_ref_to_setting_id = {
+            graph_ref: setting_id
+            for graph_ref, setting_id in graph_property_ref_to_setting_id.items()
+            if setting_id in setting_by_id
+        }
+        graph_property_by_setting_id = {
+            setting_id: property_payload
+            for setting_id, property_payload in graph_property_by_setting_id.items()
+            if setting_id in setting_by_id
+        }
+        if isinstance(image_snapshot, dict):
+            image_snapshot_dict = cast(JsonObject, image_snapshot)
+            payload_edit_graph = image_snapshot_dict.get("editGraph")
+            if isinstance(payload_edit_graph, dict):
+                edit_graph = cast(JsonObject, payload_edit_graph)
         with self._state_lock:
             self._turn_contexts[(thread_id, turn_id)] = TurnContext(
                 base_request=request,
@@ -106,6 +204,9 @@ class PromptingMixin:
                 base_image_revision_id=request.imageSnapshot.imageRevisionId,
                 state_payload=state_payload,
                 setting_by_id=setting_by_id,
+                edit_graph=cast(JsonObject, edit_graph),
+                graph_property_ref_to_setting_id=graph_property_ref_to_setting_id,
+                graph_property_by_setting_id=graph_property_by_setting_id,
                 base_float_setting_numbers=base_float_setting_numbers,
                 live_run_enabled=request.refinement.enabled,
                 max_tool_calls=max_tool_calls,
@@ -216,6 +317,8 @@ class PromptingMixin:
     def _build_prompt_payload(self, request: RequestEnvelope) -> JsonObject:
         compact_settings: list[JsonObject] = []
         for setting in request.imageSnapshot.editableSettings:
+            if not self._is_agent_visible_setting(setting.moduleId, setting.actionPath):
+                continue
             compact_setting: JsonObject = {
                 "moduleId": setting.moduleId,
                 "moduleLabel": setting.moduleLabel,
@@ -244,6 +347,9 @@ class PromptingMixin:
                 compact_setting["defaultBool"] = setting.defaultBool
             compact_settings.append(compact_setting)
 
+        edit_graph, _, _ = build_edit_graph(request)
+        edit_graph = self._filter_edit_graph_payload(edit_graph)
+
         metadata = request.imageSnapshot.metadata
         metadata_payload: JsonObject = {
             "width": metadata.width,
@@ -265,6 +371,7 @@ class PromptingMixin:
             "imageSnapshot": {
                 "imageRevisionId": request.imageSnapshot.imageRevisionId,
                 "metadata": metadata_payload,
+                "editGraph": edit_graph,
                 "editableSettings": compact_settings,
                 "histogram": self._trim_histogram_payload(request),
                 "analysisSignals": (

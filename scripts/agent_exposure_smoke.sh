@@ -30,6 +30,10 @@ REQUIRE_CAPABILITIES="${REQUIRE_CAPABILITIES:-0}"
 EXPECTED_MIN_EDITABLE_SETTINGS="${EXPECTED_MIN_EDITABLE_SETTINGS:-20}"
 REQUIRE_PREVIEW="${REQUIRE_PREVIEW:-0}"
 REQUIRE_HISTOGRAM="${REQUIRE_HISTOGRAM:-0}"
+REQUIRE_EDIT_GRAPH="${REQUIRE_EDIT_GRAPH:-0}"
+EXPECTED_MIN_EDIT_GRAPH_NODES="${EXPECTED_MIN_EDIT_GRAPH_NODES:-0}"
+EXPECTED_MIN_EDIT_GRAPH_SUBGRAPHS="${EXPECTED_MIN_EDIT_GRAPH_SUBGRAPHS:-0}"
+EXPECTED_EDIT_GRAPH_SUBGRAPH_TYPES="${EXPECTED_EDIT_GRAPH_SUBGRAPH_TYPES:-}"
 
 if [[ -z "${ANSEL_TIMEOUT_SECONDS:-}" ]]; then
   ANSEL_TIMEOUT_SECONDS=600
@@ -63,8 +67,6 @@ if [[ -z "$EXPECTED_REFINEMENT_MODE" ]]; then
   fi
 fi
 
-REPORT_FILE="${REPORT_FILE:-$(mktemp "${TMPDIR:-/tmp}/ansel-agent-report.XXXXXX.ini")}"
-SERVER_LOG="${SERVER_LOG:-$(mktemp "${TMPDIR:-/tmp}/ansel-agent-server.XXXXXX.log")}"
 RUNTIME_DIR="${RUNTIME_DIR:-$REPO_ROOT/.ansel-local}"
 
 cleanup() {
@@ -123,6 +125,27 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   PYTHON_BIN="python3"
 fi
 
+make_temp_file() {
+  local stem="$1"
+  local suffix="$2"
+
+  "$PYTHON_BIN" - "$stem" "$suffix" <<'PY'
+import pathlib
+import sys
+import tempfile
+
+stem = sys.argv[1]
+suffix = sys.argv[2]
+tmpdir = pathlib.Path(tempfile.gettempdir())
+fd, path = tempfile.mkstemp(prefix=f"{stem}.", suffix=suffix, dir=tmpdir)
+pathlib.Path(path).unlink(missing_ok=True)
+print(path)
+PY
+}
+
+REPORT_FILE="${REPORT_FILE:-$(make_temp_file ansel-agent-report .ini)}"
+SERVER_LOG="${SERVER_LOG:-$(make_temp_file ansel-agent-server .log)}"
+
 if [[ -z "${PORT:-${ANSEL_AGENT_SERVER_PORT:-}}" ]]; then
   PORT="$((20000 + RANDOM % 20000))"
 else
@@ -135,13 +158,16 @@ HEALTH_URL="${HEALTH_URL:-http://$HOST:$PORT/health}"
 cd "$REPO_ROOT"
 
 if [[ "$SKIP_SERVER_TESTS" != "1" ]]; then
+  echo "[smoke] running server tests"
   "$PYTHON_BIN" -m pytest server/tests
 fi
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
+  echo "[smoke] building ansel"
   "$SCRIPT_DIR/build_ansel_local.sh"
 fi
 
+echo "[smoke] starting local server"
 HOST="$HOST" \
   PORT="$PORT" \
   ANSEL_AGENT_USE_MOCK_RESPONSES=1 \
@@ -160,6 +186,8 @@ if ! curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
   echo "Server did not become healthy. See $SERVER_LOG" >&2
   exit 1
 fi
+
+echo "[smoke] launching ansel autorun"
 
 launcher=("$SCRIPT_DIR/run_ansel_local.sh" --foreground --disable-opencl "$ASSET_PATH")
 if [[ "$PLATFORM" == "Linux" && -z "${DISPLAY:-}" ]]; then
@@ -405,8 +433,9 @@ print(
 )
 PY
 
-if [[ "$REQUIRE_IMAGE_STATE" == "1" || "$REQUIRE_CAPABILITIES" == "1" || "$REQUIRE_PREVIEW" == "1" || "$REQUIRE_HISTOGRAM" == "1" ]]; then
-  "$PYTHON_BIN" - "$SERVER_LOG" "$REQUIRE_IMAGE_STATE" "$REQUIRE_CAPABILITIES" "$REQUIRE_PREVIEW" "$REQUIRE_HISTOGRAM" "$EXPECTED_MIN_EDITABLE_SETTINGS" <<'PY'
+if [[ "$REQUIRE_IMAGE_STATE" == "1" || "$REQUIRE_CAPABILITIES" == "1" || "$REQUIRE_PREVIEW" == "1" || "$REQUIRE_HISTOGRAM" == "1" || "$REQUIRE_EDIT_GRAPH" == "1" ]]; then
+  echo "[smoke] validating accepted_request log details"
+  "$PYTHON_BIN" - "$SERVER_LOG" "$REQUIRE_IMAGE_STATE" "$REQUIRE_CAPABILITIES" "$REQUIRE_PREVIEW" "$REQUIRE_HISTOGRAM" "$EXPECTED_MIN_EDITABLE_SETTINGS" "$REQUIRE_EDIT_GRAPH" "$EXPECTED_MIN_EDIT_GRAPH_NODES" "$EXPECTED_MIN_EDIT_GRAPH_SUBGRAPHS" "$EXPECTED_EDIT_GRAPH_SUBGRAPH_TYPES" <<'PY'
 import json
 import sys
 
@@ -426,6 +455,16 @@ if not rows:
 accepted_request = rows[-1]
 image_snapshot = accepted_request.get("imageSnapshot")
 capabilities = accepted_request.get("capabilities")
+require_image_state = bool(int(sys.argv[2]))
+require_capabilities = bool(int(sys.argv[3]))
+require_preview = bool(int(sys.argv[4]))
+require_histogram = bool(int(sys.argv[5]))
+require_edit_graph = bool(int(sys.argv[7]))
+expected_min_graph_nodes = int(sys.argv[8])
+expected_min_graph_subgraphs = int(sys.argv[9])
+expected_graph_subgraph_types = [
+    value for value in sys.argv[10].split(",") if value
+]
 
 if image_snapshot is not None:
     if not isinstance(image_snapshot, dict):
@@ -484,10 +523,6 @@ if capabilities is not None:
         if key not in capability:
             raise SystemExit(f"Missing capability field {key}")
 
-require_image_state = bool(int(sys.argv[2]))
-require_capabilities = bool(int(sys.argv[3]))
-require_preview = bool(int(sys.argv[4]))
-require_histogram = bool(int(sys.argv[5]))
 if require_image_state and image_snapshot is None:
     raise SystemExit("Expected imageSnapshot in accepted_request log entry")
 if require_capabilities and capabilities is None:
@@ -496,6 +531,29 @@ if require_preview and (image_snapshot is None or image_snapshot.get("preview") 
     raise SystemExit("Expected preview in accepted_request log entry")
 if require_histogram and (image_snapshot is None or image_snapshot.get("histogram") is None):
     raise SystemExit("Expected histogram in accepted_request log entry")
+if require_edit_graph:
+    if not accepted_request.get("editGraphPresent"):
+        raise SystemExit("Expected editGraph summary in accepted_request log entry")
+    if int(accepted_request.get("editGraphNodeCount", 0)) < expected_min_graph_nodes:
+        raise SystemExit(
+            f"Expected at least {expected_min_graph_nodes} editGraph nodes, found "
+            f"{accepted_request.get('editGraphNodeCount', 0)}"
+        )
+    if int(accepted_request.get("editGraphSubgraphCount", 0)) < expected_min_graph_subgraphs:
+        raise SystemExit(
+            f"Expected at least {expected_min_graph_subgraphs} editGraph subgraphs, found "
+            f"{accepted_request.get('editGraphSubgraphCount', 0)}"
+        )
+    semantic_types = accepted_request.get("editGraphSubgraphSemanticTypes")
+    if not isinstance(semantic_types, list):
+        raise SystemExit("Missing editGraphSubgraphSemanticTypes in accepted_request log entry")
+    missing_subgraph_types = [
+        value for value in expected_graph_subgraph_types if value not in semantic_types
+    ]
+    if missing_subgraph_types:
+        raise SystemExit(
+            f"Missing expected editGraph subgraph semantic types: {missing_subgraph_types}"
+        )
 
 print("Accepted request log includes expected image snapshot and capability manifest.")
 PY

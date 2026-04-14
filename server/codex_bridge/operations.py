@@ -3,15 +3,23 @@ from __future__ import annotations
 # pyright: reportAttributeAccessIssue=false
 
 import copy
-import json
 from collections.abc import Sequence
 from typing import cast
 
 from shared.protocol import AgentPlan, JsonObject
 
 from .apply_batch import prepare_apply_batch
-from .config import _TOOL_APPLY_OPERATIONS, _WHITE_BALANCE_ACTION_PATH_PREFIXES, logger
+from .config import _TOOL_APPLY_OPERATIONS, logger
 from .models import TurnContext
+from .operation_support import (
+    apply_operation_to_settings,
+    extract_error_message,
+    is_white_balance_action_path,
+    normalize_graph_operation,
+    setting_ids_for_action_path,
+    white_balance_action_paths,
+    white_balance_operation_rank,
+)
 
 
 class OperationsMixin:
@@ -60,7 +68,8 @@ class OperationsMixin:
         simulated_settings = copy.deepcopy(context.setting_by_id)
         for operation in ordered_batch:
             apply_error, _ = self._apply_operation_to_settings(
-                simulated_settings, operation
+                simulated_settings,
+                operation,
             )
             if apply_error:
                 self._log_white_balance_tool_call(
@@ -154,7 +163,9 @@ class OperationsMixin:
         operation: JsonObject,
     ) -> str | None:
         apply_error, _ = self._apply_operation_to_settings(
-            context.setting_by_id, operation
+            context.setting_by_id,
+            operation,
+            graph_property_by_setting_id=context.graph_property_by_setting_id,
         )
         if apply_error:
             return apply_error
@@ -224,6 +235,19 @@ class OperationsMixin:
         )
         action_path = str(target_dict.get("actionPath") or "unknown")
         setting_id = str(target_dict.get("settingId") or "")
+        if (
+            target_dict.get("type") == "graph-control"
+            and isinstance(target_dict.get("nodeId"), str)
+            and isinstance(target_dict.get("propertyPath"), str)
+        ):
+            graph_node_id = cast(str, target_dict["nodeId"])
+            graph_property_path = cast(str, target_dict["propertyPath"])
+            graph_ref = f"{graph_node_id}:{graph_property_path}"
+            resolved_setting_id = context.graph_property_ref_to_setting_id.get(
+                graph_ref
+            )
+            if resolved_setting_id:
+                setting_id = resolved_setting_id
         setting = context.setting_by_id.get(setting_id) or {}
         module_label = str(setting.get("moduleLabel") or "")
         control_label = str(setting.get("label") or action_path.rsplit("/", 1)[-1])
@@ -275,6 +299,22 @@ class OperationsMixin:
             if key not in raw_operation:
                 return {}, f"operation is missing required member '{key}'"
 
+        target = raw_operation.get("target")
+        if not isinstance(target, dict):
+            return {}, "operation target must be an object"
+        target_dict = cast(JsonObject, target)
+
+        if target_dict.get("type") == "graph-control":
+            normalized_graph_operation, graph_error = self._normalize_graph_operation(
+                context,
+                raw_operation,
+                sequence_number=sequence_number,
+            )
+            if graph_error is not None:
+                return {}, graph_error
+            assert normalized_graph_operation is not None
+            return normalized_graph_operation, None
+
         operation_id = raw_operation.get("operationId")
         if not isinstance(operation_id, str) or not operation_id:
             operation_id = f"tool-op-{sequence_number}"
@@ -323,71 +363,27 @@ class OperationsMixin:
             return {}, f"operation targets unknown settingId '{setting_id}'"
         return operation, None
 
+    def _normalize_graph_operation(
+        self,
+        context: TurnContext,
+        raw_operation: JsonObject,
+        *,
+        sequence_number: int,
+    ) -> tuple[JsonObject | None, str | None]:
+        return normalize_graph_operation(
+            context, raw_operation, sequence_number=sequence_number
+        )
+
     @staticmethod
     def _setting_ids_for_action_path(
         setting_by_id: dict[str, JsonObject],
         action_path: str,
     ) -> list[str]:
-        return [
-            setting_id
-            for setting_id, setting in setting_by_id.items()
-            if setting.get("actionPath") == action_path
-        ]
-
-    @staticmethod
-    def _choice_mapping(setting: JsonObject) -> dict[int, str]:
-        choices = setting.get("choices")
-        mapping: dict[int, str] = {}
-        if not isinstance(choices, list):
-            return mapping
-        for choice in choices:
-            if not isinstance(choice, dict):
-                continue
-            choice_dict = cast(JsonObject, choice)
-            value = choice_dict.get("choiceValue")
-            choice_id = choice_dict.get("choiceId")
-            if isinstance(value, int) and isinstance(choice_id, str) and choice_id:
-                mapping[value] = choice_id
-        return mapping
-
-    @staticmethod
-    def _is_white_balance_action_path(action_path: str) -> bool:
-        return any(
-            action_path.startswith(prefix)
-            for prefix in _WHITE_BALANCE_ACTION_PATH_PREFIXES
-        )
+        return setting_ids_for_action_path(setting_by_id, action_path)
 
     @classmethod
     def _white_balance_operation_rank(cls, operation: JsonObject) -> tuple[int, str]:
-        target = operation.get("target")
-        action_path = (
-            cast(JsonObject, target).get("actionPath")
-            if isinstance(target, dict)
-            else None
-        )
-        if not isinstance(action_path, str):
-            return (99, "")
-        leaf = action_path.rsplit("/", 1)[-1].lower()
-        kind = operation.get("kind")
-        if kind == "set-bool":
-            return (0, leaf)
-        if kind == "set-choice":
-            return (1, leaf)
-        if leaf == "finetune":
-            return (2, leaf)
-        if leaf == "temperature":
-            return (3, leaf)
-        if leaf == "tint":
-            return (4, leaf)
-        channel_order = {
-            "red": 5,
-            "green": 6,
-            "blue": 7,
-            "emerald": 8,
-            "yellow": 9,
-            "various": 9,
-        }
-        return (channel_order.get(leaf, 99), leaf)
+        return white_balance_operation_rank(operation)
 
     def _order_operations_for_apply(
         self, operations: list[JsonObject]
@@ -396,7 +392,7 @@ class OperationsMixin:
         wb_indexes = [
             index
             for index, operation in enumerate(operations)
-            if self._is_white_balance_action_path(
+            if is_white_balance_action_path(
                 str(operation.get("target", {}).get("actionPath") or "")
             )
         ]
@@ -417,24 +413,8 @@ class OperationsMixin:
         success: bool,
         error: str | None = None,
     ) -> None:
-        def _extract_paths(operations: Sequence[object]) -> list[str]:
-            paths: list[str] = []
-            for operation in operations:
-                if not isinstance(operation, dict):
-                    continue
-                operation_dict = cast(JsonObject, operation)
-                target = operation_dict.get("target")
-                if not isinstance(target, dict):
-                    continue
-                action_path = cast(JsonObject, target).get("actionPath")
-                if isinstance(action_path, str) and self._is_white_balance_action_path(
-                    action_path
-                ):
-                    paths.append(action_path)
-            return paths
-
-        attempted_paths = _extract_paths(attempted_operations)
-        applied_paths = _extract_paths(applied_operations)
+        attempted_paths = white_balance_action_paths(list(attempted_operations))
+        applied_paths = white_balance_action_paths(list(applied_operations))
         if not attempted_paths and not applied_paths:
             return
 
@@ -457,143 +437,15 @@ class OperationsMixin:
         self,
         setting_by_id: dict[str, JsonObject],
         operation: JsonObject,
+        *,
+        graph_property_by_setting_id: dict[str, JsonObject] | None = None,
     ) -> tuple[str | None, JsonObject | None]:
-        target = operation.get("target")
-        if not isinstance(target, dict):
-            return "operation target must be an object", None
-        target_dict = cast(JsonObject, target)
-
-        setting_id = target_dict.get("settingId")
-        action_path = target_dict.get("actionPath")
-        if not isinstance(setting_id, str) or not isinstance(action_path, str):
-            return "operation target requires settingId and actionPath", None
-
-        setting = setting_by_id.get(setting_id)
-        if not isinstance(setting, dict):
-            return f"unknown settingId '{setting_id}'", None
-        if setting.get("actionPath") != action_path:
-            return (
-                f"actionPath mismatch for settingId '{setting_id}': expected "
-                f"{setting.get('actionPath')}, got {action_path}",
-                None,
-            )
-
-        kind = operation.get("kind")
-        if setting.get("kind") != kind:
-            return f"kind mismatch for settingId '{setting_id}'", None
-        value = operation.get("value")
-        if not isinstance(value, dict):
-            return "operation value must be an object", None
-        value_dict = cast(JsonObject, value)
-
-        mode = value_dict.get("mode")
-        supported_modes = setting.get("supportedModes")
-        if not isinstance(mode, str):
-            return "operation value requires mode", None
-        if isinstance(supported_modes, list) and mode not in supported_modes:
-            return f"mode '{mode}' is not supported by settingId '{setting_id}'", None
-
-        if kind == "set-float":
-            number_value = value_dict.get("number")
-            if not isinstance(number_value, (int, float)):
-                return (
-                    f"set-float operation requires numeric value.number for '{setting_id}'",
-                    None,
-                )
-            current = setting.get("currentNumber")
-            if not isinstance(current, (int, float)):
-                current = setting.get("defaultNumber")
-            if not isinstance(current, (int, float)):
-                current = 0.0
-            requested_number = float(number_value)
-            resolved_number = (
-                float(current) + requested_number
-                if mode == "delta"
-                else requested_number
-            )
-            next_value = resolved_number
-            min_number = setting.get("minNumber")
-            max_number = setting.get("maxNumber")
-            if isinstance(min_number, (int, float)):
-                next_value = max(next_value, float(min_number))
-            if isinstance(max_number, (int, float)):
-                next_value = min(next_value, float(max_number))
-            setting["currentNumber"] = next_value
-            return None, {
-                "actionPath": action_path,
-                "settingId": setting_id,
-                "kind": kind,
-                "mode": mode,
-                "requestedNumber": requested_number,
-                "resolvedNumber": resolved_number,
-                "appliedNumber": next_value,
-                "wasClamped": abs(next_value - resolved_number) > 1e-12,
-            }
-
-        if kind == "set-choice":
-            choice_value = value_dict.get("choiceValue")
-            if not isinstance(choice_value, int):
-                return (
-                    f"set-choice operation requires integer value.choiceValue for '{setting_id}'",
-                    None,
-                )
-            choice_mapping = self._choice_mapping(setting)
-            if choice_mapping and choice_value not in choice_mapping:
-                return (
-                    f"choiceValue {choice_value} is not valid for '{setting_id}'",
-                    None,
-                )
-            choice_id = value_dict.get("choiceId")
-            if isinstance(choice_id, str) and choice_mapping.get(choice_value) not in {
-                None,
-                choice_id,
-            }:
-                expected_choice_id = choice_mapping.get(choice_value)
-                return (
-                    f"choiceId mismatch for '{setting_id}': expected {expected_choice_id}, got {choice_id}",
-                    None,
-                )
-            setting["currentChoiceValue"] = choice_value
-            if choice_value in choice_mapping:
-                setting["currentChoiceId"] = choice_mapping[choice_value]
-            return None, {
-                "actionPath": action_path,
-                "settingId": setting_id,
-                "kind": kind,
-                "mode": mode,
-                "requestedChoiceValue": choice_value,
-                "appliedChoiceValue": choice_value,
-                "appliedChoiceId": setting.get("currentChoiceId"),
-            }
-
-        if kind == "set-bool":
-            bool_value = value_dict.get("boolValue")
-            if not isinstance(bool_value, bool):
-                return (
-                    f"set-bool operation requires boolean value.boolValue for '{setting_id}'",
-                    None,
-                )
-            setting["currentBool"] = bool_value
-            return None, {
-                "actionPath": action_path,
-                "settingId": setting_id,
-                "kind": kind,
-                "mode": mode,
-                "appliedBoolValue": bool_value,
-            }
-
-        return f"unsupported operation kind '{kind}'", None
+        return apply_operation_to_settings(
+            setting_by_id,
+            operation,
+            graph_property_by_setting_id=graph_property_by_setting_id,
+        )
 
     @staticmethod
     def _extract_error_message(message: str) -> str:
-        try:
-            payload = json.loads(message)
-        except (TypeError, json.JSONDecodeError):
-            return message
-        if isinstance(payload, dict):
-            error = payload.get("error")
-            if isinstance(error, dict):
-                nested = error.get("message")
-                if isinstance(nested, str) and nested:
-                    return nested
-        return message
+        return extract_error_message(message)

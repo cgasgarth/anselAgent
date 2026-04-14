@@ -57,7 +57,6 @@
 #include "control/conf.h"
 #include "control/control.h"
 #include "develop/develop.h"
-#include "develop/dev_history.h"
 #include "develop/masks.h"
 
 #include "gui/gtk.h"
@@ -888,12 +887,7 @@ void gui_reset(dt_lib_module_t *self)
 
     dt_dev_undo_end_record(darktable.develop);
 
-    dt_dev_reload_history_items(darktable.develop, imgid);
-    dt_dev_history_gui_update(darktable.develop);
     dt_dev_pixelpipe_resync_history_all(darktable.develop);
-    dt_dev_history_notify_change(darktable.develop, imgid);
-    DT_DEBUG_CONTROL_SIGNAL_RAISE(darktable.signals, DT_SIGNAL_DEVELOP_HISTORY_CHANGE);
-    dt_control_queue_redraw_center();
   }
 }
 

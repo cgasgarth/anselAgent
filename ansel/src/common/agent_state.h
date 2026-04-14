@@ -68,6 +68,7 @@ typedef struct dt_agent_image_state_t
   dt_agent_image_metadata_t metadata;
   GPtrArray *controls;
   GPtrArray *history;
+  gchar *edit_graph_json;
   struct
   {
     gboolean available;

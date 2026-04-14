@@ -307,6 +307,27 @@ def test_request_envelope_accepts_v3_payload() -> None:
     assert envelope.imageSnapshot.histogram.binCount == 4
 
 
+def test_request_envelope_accepts_optional_edit_graph_payload() -> None:
+    payload = _sample_request_payload()
+    payload["imageSnapshot"]["editGraph"] = {
+        "graphId": "edit-pipeline",
+        "graphType": "module-property-graph",
+        "nodes": [
+            {
+                "nodeId": "native:module:rgbcurve:0",
+                "nodeType": "native-module-instance",
+            }
+        ],
+        "edges": [],
+        "subgraphs": [],
+    }
+
+    envelope = RequestEnvelope.model_validate(payload)
+
+    assert envelope.imageSnapshot.editGraph is not None
+    assert envelope.imageSnapshot.editGraph["graphId"] == "edit-pipeline"
+
+
 def test_request_envelope_accepts_white_balance_controls_when_manifest_matches() -> (
     None
 ):

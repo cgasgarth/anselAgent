@@ -709,7 +709,7 @@ def test_developer_instructions_require_proactive_full_edit_planning() -> None:
     assert "Use only these tools in this run" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert "Do not call generic command execution" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
-        "Only emit raw operations targeting provided settingId/actionPath pairs."
+        "Treat `editGraph` as the authoritative editing surface."
         in _THREAD_DEVELOPER_INSTRUCTIONS
     )
     assert (
@@ -724,7 +724,8 @@ def test_developer_instructions_require_proactive_full_edit_planning() -> None:
     assert "always a multi-turn live-edit run" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert "set-choice uses value.choiceValue" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
-        "Prefer canonical intent over raw control IDs" in _THREAD_DEVELOPER_INSTRUCTIONS
+        "Prefer graph-based editing against the provided `editGraph`"
+        in _THREAD_DEVELOPER_INSTRUCTIONS
     )
     assert "Do not browse playbooks speculatively" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
@@ -834,7 +835,208 @@ def test_prompt_payload_includes_module_context_for_live_runs() -> None:
         "height": 667,
         "base64Data": None,
     }
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+    assert edit_graph["graphId"] == "edit-pipeline"
+    assert edit_graph["graphType"] == "module-property-graph"
+    assert edit_graph["schemaVersion"] == "2"
+    exposure_node = next(
+        node for node in edit_graph["nodes"] if node["moduleId"] == "exposure"
+    )
+    assert exposure_node["nodeId"] == "module:exposure:0"
+    assert exposure_node["properties"][0]["propertyPath"] == "exposure"
+    assert exposure_node["properties"][0]["controlId"] == "setting.exposure.primary"
+    exposure_group = next(
+        node
+        for node in edit_graph["nodes"]
+        if node["nodeId"] == "group:exposure:0:primary"
+    )
+    assert exposure_group["groupPath"] == "exposure.primary"
+    assert exposure_group["properties"][0]["propertyPath"] == "exposure"
+    assert (
+        exposure_group["properties"][0]["semanticRole"] == "exposure.primary.exposure"
+    )
+    assert any(
+        edge["edgeType"] == "contains" and edge["toNodeId"] == exposure_group["nodeId"]
+        for edge in edit_graph["edges"]
+    )
+    assert any(
+        subgraph["rootNodeId"] == exposure_node["nodeId"]
+        for subgraph in edit_graph["subgraphs"]
+    )
+    assert all(
+        node.get("moduleId") not in {"clipping", "crop"}
+        for node in edit_graph["nodes"]
+        if isinstance(node, dict)
+    )
+    assert all(
+        setting["moduleId"] not in {"clipping", "crop"}
+        for setting in payload["imageSnapshot"]["editableSettings"]
+    )
     assert "editProfile" not in payload["imageSnapshot"]
+
+
+def test_prompt_payload_merges_native_edit_graph_nodes() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    request.imageSnapshot.editGraph = {
+        "graphId": "edit-pipeline",
+        "graphType": "module-property-graph",
+        "nodes": [
+            {
+                "nodeId": "native:module:rgbcurve:0",
+                "nodeType": "native-module-instance",
+                "semanticType": "rgbcurve-module",
+            }
+        ],
+        "edges": [],
+        "subgraphs": [
+            {
+                "subgraphId": "native:subgraph:rgbcurve:0",
+                "subgraphType": "native-curve-subgraph",
+                "rootNodeId": "native:module:rgbcurve:0",
+            }
+        ],
+    }
+
+    payload = bridge._build_prompt_payload(request)  # type: ignore[attr-defined]
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+
+    assert any(
+        node["nodeId"] == "native:module:rgbcurve:0" for node in edit_graph["nodes"]
+    )
+    assert any(
+        subgraph["subgraphId"] == "native:subgraph:rgbcurve:0"
+        for subgraph in edit_graph["subgraphs"]
+    )
+
+
+def test_prompt_payload_groups_toneequal_controls_under_tone_bands() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    payload = _sample_request().model_dump(mode="json")
+    payload["capabilityManifest"]["targets"].append(
+        {
+            "moduleId": "toneequal",
+            "moduleLabel": "tone equalizer",
+            "capabilityId": "toneequal.shadows",
+            "label": "Shadows",
+            "kind": "set-float",
+            "targetType": "ansel-action",
+            "actionPath": "iop/toneequal/shadows",
+            "supportedModes": ["set", "delta"],
+            "minNumber": -4.0,
+            "maxNumber": 4.0,
+            "defaultNumber": 0.0,
+            "stepNumber": 0.1,
+        }
+    )
+    payload["imageSnapshot"]["editableSettings"].append(
+        {
+            "moduleId": "toneequal",
+            "moduleLabel": "tone equalizer",
+            "settingId": "setting.toneequal.shadows",
+            "capabilityId": "toneequal.shadows",
+            "label": "Shadows",
+            "actionPath": "iop/toneequal/shadows",
+            "kind": "set-float",
+            "currentNumber": 0.0,
+            "supportedModes": ["set", "delta"],
+            "minNumber": -4.0,
+            "maxNumber": 4.0,
+            "defaultNumber": 0.0,
+            "stepNumber": 0.1,
+        }
+    )
+    request = RequestEnvelope.model_validate(payload)
+
+    payload = bridge._build_prompt_payload(request)  # type: ignore[attr-defined]
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+    tone_group = next(
+        node
+        for node in edit_graph["nodes"]
+        if node["nodeId"] == "group:toneequal:0:bands"
+    )
+
+    assert tone_group["semanticType"] == "tone-bands"
+    assert tone_group["groupPath"] == "toneEqualizer.bands"
+    assert tone_group["properties"][0]["propertyPath"] == "shadows"
+    assert tone_group["properties"][0]["semanticRole"] == "toneEqualizer.bands.shadows"
+
+
+def test_developer_instructions_keep_crop_out_of_agent_instructions() -> None:
+    instructions = _THREAD_DEVELOPER_INSTRUCTIONS
+
+    assert "crop-to-bounding-box" not in instructions
+    assert "crop-normalized" not in instructions
+
+
+def test_graph_control_operations_normalize_to_editable_settings() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-graph", "turn-graph", request, data_url)  # type: ignore[attr-defined]
+    try:
+        context = bridge._get_turn_context("thread-graph", "turn-graph")  # type: ignore[attr-defined]
+        assert context is not None
+        normalized, error = bridge._normalize_tool_operation(  # type: ignore[attr-defined]
+            context,
+            {
+                "kind": "set-graph-prop",
+                "target": {
+                    "type": "graph-control",
+                    "graphId": "edit-pipeline",
+                    "nodeId": "module:exposure:0",
+                    "propertyPath": "exposure",
+                },
+                "value": {"mode": "delta", "number": 0.25},
+            },
+            sequence_number=1,
+        )
+    finally:
+        bridge._clear_turn_context("thread-graph", "turn-graph")  # type: ignore[attr-defined]
+
+    assert error is None
+    assert normalized is not None
+    assert normalized["kind"] == "set-float"
+    assert normalized["target"]["type"] == "ansel-action"
+    assert normalized["target"]["settingId"] == "setting.exposure.primary"
+    assert normalized["target"]["actionPath"] == "iop/exposure/exposure"
+
+
+def test_graph_control_operations_reject_hidden_crop_properties() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request_with_canonical_controls()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-crop", "turn-crop", request, data_url)  # type: ignore[attr-defined]
+    try:
+        context = bridge._get_turn_context("thread-crop", "turn-crop")  # type: ignore[attr-defined]
+        assert context is not None
+        normalized, error = bridge._normalize_tool_operation(  # type: ignore[attr-defined]
+            context,
+            {
+                "kind": "set-graph-prop",
+                "target": {
+                    "type": "graph-control",
+                    "graphId": "edit-pipeline",
+                    "nodeId": "group:clipping:0:rect",
+                    "propertyPath": "left",
+                },
+                "value": {"mode": "set", "number": 0.1},
+            },
+            sequence_number=1,
+        )
+    finally:
+        bridge._clear_turn_context("thread-crop", "turn-crop")  # type: ignore[attr-defined]
+
+    assert normalized == {}
+    assert error == "graph property 'group:clipping:0:rect:left' is not editable"
 
 
 def test_playbook_catalog_lists_available_prompt_playbooks() -> None:
@@ -884,9 +1086,8 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "grade-color" in prompt
     assert "rotate" in prompt
     assert "angleDegrees" in prompt
-    assert "crop-to-bounding-box" in prompt
-    assert "boxLeft" in prompt
-    assert "paddingRatio" in prompt
+    assert "crop-to-bounding-box" not in prompt
+    assert "crop-normalized" not in prompt
     assert "apply_operations returns the refreshed preview automatically" in prompt
     assert "operations are auto-applied one at a time" in prompt
     assert "Do not introduce new operations in the final JSON" in prompt
@@ -928,25 +1129,16 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "the next non-final action should usually be apply_operations" in prompt
 
 
-def test_turn_prompt_keeps_single_turn_instructions_separate_from_live_canonical_path() -> (
-    None
-):
+def test_turn_prompt_is_always_live_run_focused() -> None:
     bridge = CodexAppServerBridge(
         command=["codex", "app-server", "--listen", "stdio://"]
     )
     request = _sample_request()
-    request.refinement.enabled = False
-    request.refinement.mode = "single-turn"
-    request.refinement.maxPasses = 1
-    request.refinement.passIndex = 1
 
     prompt = bridge._build_turn_prompt(request)  # type: ignore[attr-defined]
 
-    assert "Single-turn mode: do not call apply_operations" in prompt
-    assert "return raw operations directly in the final JSON" in prompt
-    assert "you may pass `canonicalActions` to apply_operations" not in prompt
-    assert "To crop in this single-turn/raw path" in prompt
-    assert "cx=left edge" in prompt
+    assert "Live run mode is enabled" in prompt
+    assert "Single-turn mode" not in prompt
 
 
 def test_crop_to_bounding_box_requires_box_coordinates() -> None:
@@ -1017,14 +1209,6 @@ def test_canonical_binder_resolves_supported_actions_without_raw_ids() -> None:
                     "rationale": "Reduce color speckling.",
                 },
                 {
-                    "action": "crop-normalized",
-                    "left": 0.1,
-                    "top": 0.05,
-                    "right": 0.9,
-                    "bottom": 0.95,
-                    "rationale": "Tighten framing.",
-                },
-                {
                     "action": "rotate",
                     "angleDegrees": 2.5,
                     "rationale": "Straighten the frame slightly clockwise.",
@@ -1044,17 +1228,11 @@ def test_canonical_binder_resolves_supported_actions_without_raw_ids() -> None:
         "iop/colorequal/sat_blue",
         "iop/filmicrgb/white_relative_exposure",
         "iop/denoiseprofile/chroma",
-        "iop/clipping/cx",
-        "iop/clipping/cy",
-        "iop/clipping/cw",
-        "iop/clipping/ch",
         "iop/clipping/angle",
     ]
     assert bound_plan.operations[0].value.mode == "delta"
-    assert bound_plan.operations[6].value.mode == "set"
-    assert bound_plan.operations[6].value.number == pytest.approx(0.1)
-    assert bound_plan.operations[10].value.mode == "delta"
-    assert bound_plan.operations[10].value.number == pytest.approx(2.5)
+    assert bound_plan.operations[6].value.mode == "delta"
+    assert bound_plan.operations[6].value.number == pytest.approx(2.5)
 
 
 def test_canonical_binder_binds_rotate_actions_to_clipping_angle() -> None:
@@ -1087,7 +1265,7 @@ def test_canonical_binder_binds_rotate_actions_to_clipping_angle() -> None:
     ]
 
 
-def test_canonical_binder_translates_bounding_box_crop_to_crop_controls() -> None:
+def test_canonical_binder_rejects_bounding_box_crop_actions() -> None:
     request = _sample_request_with_canonical_controls()
     plan = AgentPlan.model_validate(
         {
@@ -1110,16 +1288,11 @@ def test_canonical_binder_translates_bounding_box_crop_to_crop_controls() -> Non
 
     bound_plan = bind_canonical_plan(request, plan)
 
-    axis_values = {
-        operation.target.actionPath: operation.value.number
-        for operation in bound_plan.operations
-    }
-    assert axis_values == {
-        "iop/clipping/cx": pytest.approx(0.15),
-        "iop/clipping/cy": pytest.approx(0.21),
-        "iop/clipping/cw": pytest.approx(0.75),
-        "iop/clipping/ch": pytest.approx(0.69),
-    }
+    assert bound_plan.operations == []
+    assert (
+        "crop-to-bounding-box is not supported in anselAgent"
+        in bound_plan.assistantText
+    )
 
 
 def test_canonical_binder_deduplicates_ids_for_repeated_bound_settings() -> None:
@@ -1224,7 +1397,7 @@ def test_canonical_binder_surfaces_binding_failures_safely() -> None:
         "recover-highlights could not find a highlight control"
         in bound_plan.assistantText
     )
-    assert "crop-normalized could not find a cx control" in bound_plan.assistantText
+    assert "crop-normalized is not supported in anselAgent" in bound_plan.assistantText
 
 
 def test_turn_input_in_live_mode_includes_prompt_state_and_initial_preview_image() -> (
@@ -1646,6 +1819,7 @@ def test_handle_server_request_routes_image_state_tool_call_to_dynamic_result() 
     assert result["success"] is True
     assert result["contentItems"][0]["type"] == "inputText"
     state_payload = result["contentItems"][0]["text"]
+    assert '"editGraph"' in state_payload
     assert '"editableSettings"' in state_payload
     assert '"histogram"' in state_payload
     assert '"base64Data":null' in state_payload
@@ -1913,13 +2087,6 @@ def test_apply_operations_tool_binds_canonical_actions_in_live_mode(
                                 "exposureEv": 0.4,
                             },
                             {
-                                "action": "crop-normalized",
-                                "left": 0.1,
-                                "top": 0.1,
-                                "right": 0.9,
-                                "bottom": 0.9,
-                            },
-                            {
                                 "action": "rotate",
                                 "angleDegrees": 2.5,
                             },
@@ -1931,15 +2098,12 @@ def test_apply_operations_tool_binds_canonical_actions_in_live_mode(
 
         result = sent_payloads[0]["result"]
         assert result["success"] is True
-        assert "Applied 6 operations" in result["contentItems"][0]["text"]
+        assert "Applied 2 operations" in result["contentItems"][0]["text"]
         turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
         assert turn_context is not None
         assert turn_context.setting_by_id["setting.exposure.primary"][
             "currentNumber"
         ] == pytest.approx(0.4)
-        assert turn_context.setting_by_id["setting.clipping.cx"][
-            "currentNumber"
-        ] == pytest.approx(0.1)
         assert turn_context.setting_by_id["setting.clipping.angle"][
             "currentNumber"
         ] == pytest.approx(2.5)
@@ -1947,7 +2111,7 @@ def test_apply_operations_tool_binds_canonical_actions_in_live_mode(
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 
 
-def test_apply_operations_tool_binds_bounding_box_crop_in_live_mode(
+def test_apply_operations_tool_reports_crop_bounding_box_as_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bridge = CodexAppServerBridge(
@@ -1999,22 +2163,11 @@ def test_apply_operations_tool_binds_bounding_box_crop_in_live_mode(
         )
 
         result = sent_payloads[0]["result"]
-        assert result["success"] is True
-        assert "Applied 4 operations" in result["contentItems"][0]["text"]
-        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
-        assert turn_context is not None
-        assert turn_context.setting_by_id["setting.clipping.cx"][
-            "currentNumber"
-        ] == pytest.approx(0.15)
-        assert turn_context.setting_by_id["setting.clipping.cy"][
-            "currentNumber"
-        ] == pytest.approx(0.21)
-        assert turn_context.setting_by_id["setting.clipping.cw"][
-            "currentNumber"
-        ] == pytest.approx(0.75)
-        assert turn_context.setting_by_id["setting.clipping.ch"][
-            "currentNumber"
-        ] == pytest.approx(0.69)
+        assert result["success"] is False
+        assert (
+            "crop-to-bounding-box is not supported in anselAgent"
+            in result["contentItems"][0]["text"]
+        )
     finally:
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 

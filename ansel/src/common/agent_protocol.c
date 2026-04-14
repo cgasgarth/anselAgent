@@ -571,6 +571,18 @@ static void _serialize_image_snapshot(JsonBuilder *builder,
   }
   json_builder_end_array(builder);
 
+  json_builder_set_member_name(builder, "editGraph");
+  if(state->edit_graph_json && state->edit_graph_json[0] != '\0')
+  {
+    g_autoptr(JsonParser) parser = json_parser_new();
+    if(json_parser_load_from_data(parser, state->edit_graph_json, -1, NULL))
+      json_builder_add_value(builder, json_node_copy(json_parser_get_root(parser)));
+    else
+      json_builder_add_null_value(builder);
+  }
+  else
+    json_builder_add_null_value(builder);
+
   json_builder_set_member_name(builder, "preview");
   if(state->preview.available)
   {

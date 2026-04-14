@@ -190,6 +190,7 @@ static gboolean _agent_chat_window_delete_callback(GtkWidget *widget, GdkEvent *
 static void _agent_chat_toggle_callback(GtkToggleButton *button, gpointer user_data);
 static void _agent_chat_send_clicked(GtkButton *button, gpointer user_data);
 static void _agent_chat_cancel_clicked(GtkButton *button, gpointer user_data);
+static void _agent_chat_new_chat_clicked(GtkButton *button, gpointer user_data);
 static void _agent_chat_entry_activate(GtkEntry *entry, gpointer user_data);
 
 #if HAVE_ANSEL_AGENT_CHAT_BACKEND
@@ -1544,6 +1545,8 @@ static void _agent_chat_update_sensitivity(dt_develop_t *dev)
   if(dev->agent_chat.cancel_button)
     gtk_widget_set_sensitive(dev->agent_chat.cancel_button,
                              backend_ready && dev->agent_chat.active_request != NULL);
+  if(dev->agent_chat.new_chat_button)
+    gtk_widget_set_sensitive(dev->agent_chat.new_chat_button, backend_ready);
 }
 
 static void _agent_chat_set_loading(dt_develop_t *dev, gboolean is_loading)
@@ -2314,6 +2317,17 @@ static void _agent_chat_cancel_clicked(GtkButton *button, gpointer user_data)
   _agent_chat_cancel_active_request((dt_develop_t *)user_data, _("Canceling request..."));
 }
 
+static void _agent_chat_new_chat_clicked(GtkButton *button, gpointer user_data)
+{
+  dt_develop_t *dev = (dt_develop_t *)user_data;
+  (void)button;
+  if(!dev)
+    return;
+
+  _agent_chat_cancel_active_request(dev, _("Starting a new chat"));
+  _agent_chat_reset_for_current_image(dev, TRUE);
+}
+
 static void _agent_chat_entry_activate(GtkEntry *entry, gpointer user_data)
 {
   (void)entry;
@@ -2935,6 +2949,13 @@ void gui_init(dt_view_t *self)
     g_signal_connect(G_OBJECT(dev->agent_chat.cancel_button), "clicked",
                      G_CALLBACK(_agent_chat_cancel_clicked), dev);
     gtk_box_pack_start(GTK_BOX(status_row), dev->agent_chat.cancel_button, FALSE, FALSE, 0);
+
+    dev->agent_chat.new_chat_button = gtk_button_new_with_label(_("new chat"));
+    gtk_widget_set_tooltip_text(dev->agent_chat.new_chat_button,
+                                _("reset the current conversation for this image"));
+    g_signal_connect(G_OBJECT(dev->agent_chat.new_chat_button), "clicked",
+                     G_CALLBACK(_agent_chat_new_chat_clicked), dev);
+    gtk_box_pack_start(GTK_BOX(status_row), dev->agent_chat.new_chat_button, FALSE, FALSE, 0);
 
     dev->agent_chat.error_label = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(dev->agent_chat.error_label), 0.0f);
