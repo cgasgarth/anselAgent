@@ -447,7 +447,7 @@ typedef struct dt_develop_t
   struct
   {
     GtkWidget *floating_window, *button;
-    GtkWidget *conversation_view, *input_entry, *send_button, *cancel_button;
+    GtkWidget *conversation_view, *input_entry, *send_button, *cancel_button, *new_chat_button;
     GtkWidget *status_label, *error_label, *spinner;
     gchar *app_session_id;
     gchar *image_session_id;

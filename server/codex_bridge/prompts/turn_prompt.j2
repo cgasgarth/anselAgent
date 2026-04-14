@@ -14,7 +14,7 @@ Available playbooks:
 Tool usage:
 - This turn is an image-editing workflow. Use only these tools: `get_playbook`, `get_image_state`, `get_preview_image`, and `apply_operations`.
 - Do not use command execution, file editing, patching, filesystem, or any other generic workspace tool.
-- Turn input already includes editable settings, histogram, compact analysis signals, and (in live mode) the preview image.
+- Turn input already includes an authoritative `editGraph`, legacy editable settings, histogram, compact analysis signals, and (in live mode) the preview image.
 - If the user's prompt is underspecified, infer likely photo type and style direction from the provided preview image and analysis signals.
 - Use read-only tools (get_image_state, get_preview_image) only when you need refreshed state after edits.
 - Use get_playbook only when it is likely to materially change the edit plan or reduce real uncertainty. Do not browse playbooks speculatively.
@@ -29,12 +29,15 @@ Tool usage:
 - Before finalizing, consider whether additional provided controls would materially improve tone, color, detail, crop, or noise; do not stop at basic exposure/contrast edits when stronger supported tools are available.
 - Always optimize toward refinement.goalText.
 {% if live_run_enabled %}Live run mode is enabled: use apply_operations for iterative edits inside this same run.
+- Prefer graph-based operations against `editGraph` nodes and properties. Use `target.type = "graph-control"`, `graphId = "edit-pipeline"`, and the exact provided `nodeId` + `propertyPath`.
+- Graph operations should normally use `kind = "set-graph-prop"` with the same value shape you would use for the resolved control (`number`, `choiceValue`, or `boolValue`).
+- Do not treat crop/framing as four unrelated low-level graph props unless you are intentionally refining a single edge. For normal reframing, prefer canonical crop actions so the runtime can translate a coherent crop box deterministically.
 For this multi-turn path, you may pass `canonicalActions` to apply_operations instead of raw operations for these supported intent-level edits: `adjust-exposure`, `adjust-white-balance`, `recover-highlights`, `reduce-noise`, `grade-color`, `rotate`, `crop-normalized`, `crop-to-bounding-box`.
 Canonical fields: `adjust-exposure` uses `exposureEv`; `adjust-white-balance` uses `temperatureDelta`, `tintDelta`, and/or `presetChoiceId`; `recover-highlights` and `reduce-noise` use `strength`; `grade-color` uses `target` + `amount`; `rotate` uses signed `angleDegrees` for precise rotation deltas, with positive values rotating right and negative values rotating left; `crop-normalized` uses `left`, `top`, `right`, `bottom` in normalized [0,1] coordinates.
 For subject-centric crops, prefer `crop-to-bounding-box` over raw crop edges: provide `boxLeft`, `boxTop`, `boxWidth`, `boxHeight`, and optional `paddingRatio`, and the runtime will deterministically translate that box into concrete crop/clipping controls.
 The runtime binds supported canonical actions to concrete Ansel controls deterministically before applying them.
 Inside each apply_operations call, operations are auto-applied one at a time with a fresh render after each step.
-Turn input includes the current preview image, editable settings, and histogram.
+Turn input includes the current preview image, the authoritative editGraph, legacy editable settings, and histogram.
 After each apply_operations call, inspect the refreshed preview and re-check get_image_state when you need refreshed exact state.
 Apply at least one edit batch within the first {{ apply_budget_window }} tool calls.
 After calling get_playbook, the next non-final action should usually be apply_operations unless refreshed image state is strictly required.

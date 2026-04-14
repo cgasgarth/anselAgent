@@ -709,7 +709,7 @@ def test_developer_instructions_require_proactive_full_edit_planning() -> None:
     assert "Use only these tools in this run" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert "Do not call generic command execution" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
-        "Only emit raw operations targeting provided settingId/actionPath pairs."
+        "Treat `editGraph` as the authoritative editing surface."
         in _THREAD_DEVELOPER_INSTRUCTIONS
     )
     assert (
@@ -724,7 +724,8 @@ def test_developer_instructions_require_proactive_full_edit_planning() -> None:
     assert "always a multi-turn live-edit run" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert "set-choice uses value.choiceValue" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
-        "Prefer canonical intent over raw control IDs" in _THREAD_DEVELOPER_INSTRUCTIONS
+        "Prefer graph-based editing against the provided `editGraph`"
+        in _THREAD_DEVELOPER_INSTRUCTIONS
     )
     assert "Do not browse playbooks speculatively" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert (
@@ -834,7 +835,205 @@ def test_prompt_payload_includes_module_context_for_live_runs() -> None:
         "height": 667,
         "base64Data": None,
     }
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+    assert edit_graph["graphId"] == "edit-pipeline"
+    assert edit_graph["graphType"] == "module-property-graph"
+    assert edit_graph["schemaVersion"] == "2"
+    exposure_node = next(
+        node for node in edit_graph["nodes"] if node["moduleId"] == "exposure"
+    )
+    assert exposure_node["nodeId"] == "module:exposure:0"
+    assert exposure_node["properties"][0]["propertyPath"] == "exposure"
+    assert exposure_node["properties"][0]["controlId"] == "setting.exposure.primary"
+    exposure_group = next(
+        node
+        for node in edit_graph["nodes"]
+        if node["nodeId"] == "group:exposure:0:primary"
+    )
+    assert exposure_group["groupPath"] == "exposure.primary"
+    assert exposure_group["properties"][0]["propertyPath"] == "exposure"
+    assert (
+        exposure_group["properties"][0]["semanticRole"] == "exposure.primary.exposure"
+    )
+    assert any(
+        edge["edgeType"] == "contains" and edge["toNodeId"] == exposure_group["nodeId"]
+        for edge in edit_graph["edges"]
+    )
+    assert any(
+        subgraph["rootNodeId"] == exposure_node["nodeId"]
+        for subgraph in edit_graph["subgraphs"]
+    )
     assert "editProfile" not in payload["imageSnapshot"]
+
+
+def test_prompt_payload_merges_native_edit_graph_nodes() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    request.imageSnapshot.editGraph = {
+        "graphId": "edit-pipeline",
+        "graphType": "module-property-graph",
+        "nodes": [
+            {
+                "nodeId": "native:module:rgbcurve:0",
+                "nodeType": "native-module-instance",
+                "semanticType": "rgbcurve-module",
+            }
+        ],
+        "edges": [],
+        "subgraphs": [
+            {
+                "subgraphId": "native:subgraph:rgbcurve:0",
+                "subgraphType": "native-curve-subgraph",
+                "rootNodeId": "native:module:rgbcurve:0",
+            }
+        ],
+    }
+
+    payload = bridge._build_prompt_payload(request)  # type: ignore[attr-defined]
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+
+    assert any(
+        node["nodeId"] == "native:module:rgbcurve:0" for node in edit_graph["nodes"]
+    )
+    assert any(
+        subgraph["subgraphId"] == "native:subgraph:rgbcurve:0"
+        for subgraph in edit_graph["subgraphs"]
+    )
+
+
+def test_prompt_payload_groups_toneequal_controls_under_tone_bands() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    payload = _sample_request().model_dump(mode="json")
+    payload["capabilityManifest"]["targets"].append(
+        {
+            "moduleId": "toneequal",
+            "moduleLabel": "tone equalizer",
+            "capabilityId": "toneequal.shadows",
+            "label": "Shadows",
+            "kind": "set-float",
+            "targetType": "ansel-action",
+            "actionPath": "iop/toneequal/shadows",
+            "supportedModes": ["set", "delta"],
+            "minNumber": -4.0,
+            "maxNumber": 4.0,
+            "defaultNumber": 0.0,
+            "stepNumber": 0.1,
+        }
+    )
+    payload["imageSnapshot"]["editableSettings"].append(
+        {
+            "moduleId": "toneequal",
+            "moduleLabel": "tone equalizer",
+            "settingId": "setting.toneequal.shadows",
+            "capabilityId": "toneequal.shadows",
+            "label": "Shadows",
+            "actionPath": "iop/toneequal/shadows",
+            "kind": "set-float",
+            "currentNumber": 0.0,
+            "supportedModes": ["set", "delta"],
+            "minNumber": -4.0,
+            "maxNumber": 4.0,
+            "defaultNumber": 0.0,
+            "stepNumber": 0.1,
+        }
+    )
+    request = RequestEnvelope.model_validate(payload)
+
+    payload = bridge._build_prompt_payload(request)  # type: ignore[attr-defined]
+    edit_graph = payload["imageSnapshot"]["editGraph"]
+    tone_group = next(
+        node
+        for node in edit_graph["nodes"]
+        if node["nodeId"] == "group:toneequal:0:bands"
+    )
+
+    assert tone_group["semanticType"] == "tone-bands"
+    assert tone_group["groupPath"] == "toneEqualizer.bands"
+    assert tone_group["properties"][0]["propertyPath"] == "shadows"
+    assert tone_group["properties"][0]["semanticRole"] == "toneEqualizer.bands.shadows"
+
+
+def test_developer_instructions_prefer_canonical_crop_actions() -> None:
+    instructions = _THREAD_DEVELOPER_INSTRUCTIONS
+
+    assert (
+        "prefer canonical crop actions over raw crop graph properties" in instructions
+    )
+    assert "crop-to-bounding-box" in instructions
+    assert "crop-normalized" in instructions
+
+
+def test_graph_control_operations_normalize_to_editable_settings() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-graph", "turn-graph", request, data_url)  # type: ignore[attr-defined]
+    try:
+        context = bridge._get_turn_context("thread-graph", "turn-graph")  # type: ignore[attr-defined]
+        assert context is not None
+        normalized, error = bridge._normalize_tool_operation(  # type: ignore[attr-defined]
+            context,
+            {
+                "kind": "set-graph-prop",
+                "target": {
+                    "type": "graph-control",
+                    "graphId": "edit-pipeline",
+                    "nodeId": "module:exposure:0",
+                    "propertyPath": "exposure",
+                },
+                "value": {"mode": "delta", "number": 0.25},
+            },
+            sequence_number=1,
+        )
+    finally:
+        bridge._clear_turn_context("thread-graph", "turn-graph")  # type: ignore[attr-defined]
+
+    assert error is None
+    assert normalized is not None
+    assert normalized["kind"] == "set-float"
+    assert normalized["target"]["type"] == "ansel-action"
+    assert normalized["target"]["settingId"] == "setting.exposure.primary"
+    assert normalized["target"]["actionPath"] == "iop/exposure/exposure"
+
+
+def test_graph_control_operations_resolve_group_semantic_property_paths() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request_with_canonical_controls()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-crop", "turn-crop", request, data_url)  # type: ignore[attr-defined]
+    try:
+        context = bridge._get_turn_context("thread-crop", "turn-crop")  # type: ignore[attr-defined]
+        assert context is not None
+        normalized, error = bridge._normalize_tool_operation(  # type: ignore[attr-defined]
+            context,
+            {
+                "kind": "set-graph-prop",
+                "target": {
+                    "type": "graph-control",
+                    "graphId": "edit-pipeline",
+                    "nodeId": "group:clipping:0:rect",
+                    "propertyPath": "left",
+                },
+                "value": {"mode": "set", "number": 0.1},
+            },
+            sequence_number=1,
+        )
+    finally:
+        bridge._clear_turn_context("thread-crop", "turn-crop")  # type: ignore[attr-defined]
+
+    assert error is None
+    assert normalized is not None
+    assert normalized["kind"] == "set-float"
+    assert normalized["target"]["settingId"] == "setting.clipping.cx"
+    assert normalized["target"]["actionPath"] == "iop/clipping/cx"
 
 
 def test_playbook_catalog_lists_available_prompt_playbooks() -> None:
@@ -887,6 +1086,7 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "crop-to-bounding-box" in prompt
     assert "boxLeft" in prompt
     assert "paddingRatio" in prompt
+    assert "Do not treat crop/framing as four unrelated low-level graph props" in prompt
     assert "apply_operations returns the refreshed preview automatically" in prompt
     assert "operations are auto-applied one at a time" in prompt
     assert "Do not introduce new operations in the final JSON" in prompt
@@ -1646,6 +1846,7 @@ def test_handle_server_request_routes_image_state_tool_call_to_dynamic_result() 
     assert result["success"] is True
     assert result["contentItems"][0]["type"] == "inputText"
     state_payload = result["contentItems"][0]["text"]
+    assert '"editGraph"' in state_payload
     assert '"editableSettings"' in state_payload
     assert '"histogram"' in state_payload
     assert '"base64Data":null' in state_payload

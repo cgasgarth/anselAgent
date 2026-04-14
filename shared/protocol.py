@@ -266,6 +266,7 @@ class ImageSnapshot(StrictBaseModel):
     historyCount: int
     editableSettings: list[EditableSetting]
     history: list[ImageHistoryItem]
+    editGraph: JsonObject | None = None
     preview: PreviewImage | None
     histogram: Histogram | None
     analysisSignals: ImageAnalysisSignals | None = None

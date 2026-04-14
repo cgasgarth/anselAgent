@@ -9,7 +9,53 @@
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <glib/gi18n.h>
+#include <json-glib/json-glib.h>
 #include <string.h>
+
+#define DT_AGENT_RGBCURVE_MAX_CHANNELS 3
+#define DT_AGENT_RGBCURVE_MAXNODES 20
+#define DT_AGENT_TONECURVE_MAX_CHANNELS 3
+#define DT_AGENT_TONECURVE_MAXNODES 20
+#define DT_AGENT_BASECURVE_MAX_CHANNELS 3
+#define DT_AGENT_BASECURVE_MAXNODES 20
+
+typedef struct dt_agent_curve_node_t
+{
+  float x;
+  float y;
+} dt_agent_curve_node_t;
+
+typedef struct dt_agent_rgbcurve_params_t
+{
+  dt_agent_curve_node_t curve_nodes[DT_AGENT_RGBCURVE_MAX_CHANNELS][DT_AGENT_RGBCURVE_MAXNODES];
+  int curve_num_nodes[DT_AGENT_RGBCURVE_MAX_CHANNELS];
+  int curve_type[DT_AGENT_RGBCURVE_MAX_CHANNELS];
+  int curve_autoscale;
+  gboolean compensate_middle_grey;
+  int preserve_colors;
+} dt_agent_rgbcurve_params_t;
+
+typedef struct dt_agent_tonecurve_params_t
+{
+  dt_agent_curve_node_t tonecurve[DT_AGENT_TONECURVE_MAX_CHANNELS][DT_AGENT_TONECURVE_MAXNODES];
+  int tonecurve_nodes[DT_AGENT_TONECURVE_MAX_CHANNELS];
+  int tonecurve_type[DT_AGENT_TONECURVE_MAX_CHANNELS];
+  int tonecurve_autoscale_ab;
+  int tonecurve_preset;
+  int tonecurve_unbound_ab;
+  int preserve_colors;
+} dt_agent_tonecurve_params_t;
+
+typedef struct dt_agent_basecurve_params_t
+{
+  dt_agent_curve_node_t basecurve[DT_AGENT_BASECURVE_MAX_CHANNELS][DT_AGENT_BASECURVE_MAXNODES];
+  int basecurve_nodes[DT_AGENT_BASECURVE_MAX_CHANNELS];
+  int basecurve_type[DT_AGENT_BASECURVE_MAX_CHANNELS];
+  int exposure_fusion;
+  float exposure_stops;
+  float exposure_bias;
+  int preserve_colors;
+} dt_agent_basecurve_params_t;
 
 typedef enum dt_agent_state_error_t
 {
@@ -180,6 +226,7 @@ void dt_agent_image_state_clear(dt_agent_image_state_t *state)
     g_ptr_array_unref(state->controls);
   if(state->history)
     g_ptr_array_unref(state->history);
+  g_free(state->edit_graph_json);
   g_free(state->preview.preview_id);
   g_free(state->preview.mime_type);
   g_free(state->preview.base64_data);
@@ -216,6 +263,7 @@ void dt_agent_image_state_copy(dt_agent_image_state_t *dest,
     g_ptr_array_add(dest->history, _agent_history_item_copy(item));
   }
 
+  dest->edit_graph_json = g_strdup(src->edit_graph_json);
   dest->preview.available = src->preview.available;
   dest->preview.preview_id = g_strdup(src->preview.preview_id);
   dest->preview.mime_type = g_strdup(src->preview.mime_type);
@@ -489,6 +537,279 @@ static void _snapshot_from_export_fallback(const dt_develop_t *dev, dt_agent_ima
   free(memory.buf);
 }
 
+static gboolean _append_native_curve_module(JsonBuilder *nodes_builder,
+                                            JsonBuilder *edges_builder,
+                                            JsonBuilder *subgraphs_builder,
+                                            const char *module_id,
+                                            const char *module_label,
+                                            const char *module_semantic_type,
+                                            const char *subgraph_semantic_type,
+                                            const char *const *channel_ids,
+                                            const gint channel_count,
+                                            const gint instance_index,
+                                            const gint *curve_nodes,
+                                            const gint *curve_types,
+                                            const dt_agent_curve_node_t *curve_points,
+                                            const gint max_nodes)
+{
+  gboolean appended = FALSE;
+  g_autofree gchar *module_node_id = g_strdup_printf("native:module:%s:%d", module_id, instance_index);
+
+  json_builder_begin_object(nodes_builder);
+  json_builder_set_member_name(nodes_builder, "nodeId");
+  json_builder_add_string_value(nodes_builder, module_node_id);
+  json_builder_set_member_name(nodes_builder, "nodeType");
+  json_builder_add_string_value(nodes_builder, "native-module-instance");
+  json_builder_set_member_name(nodes_builder, "semanticType");
+  json_builder_add_string_value(nodes_builder, module_semantic_type);
+  json_builder_set_member_name(nodes_builder, "moduleId");
+  json_builder_add_string_value(nodes_builder, module_id);
+  json_builder_set_member_name(nodes_builder, "moduleLabel");
+  json_builder_add_string_value(nodes_builder, module_label);
+  json_builder_end_object(nodes_builder);
+
+  for(gint channel = 0; channel < channel_count; channel++)
+  {
+    const gint point_count = CLAMP(curve_nodes[channel], 0, max_nodes);
+    if(point_count <= 0)
+      continue;
+
+    appended = TRUE;
+    g_autofree gchar *channel_node_id = g_strdup_printf("native:group:%s:%d:%s",
+                                                        module_id,
+                                                        instance_index,
+                                                        channel_ids[channel]);
+    json_builder_begin_object(nodes_builder);
+    json_builder_set_member_name(nodes_builder, "nodeId");
+    json_builder_add_string_value(nodes_builder, channel_node_id);
+    json_builder_set_member_name(nodes_builder, "nodeType");
+    json_builder_add_string_value(nodes_builder, "curve-channel");
+    json_builder_set_member_name(nodes_builder, "semanticType");
+    g_autofree gchar *channel_semantic_type = g_strdup_printf("%s-channel", module_id);
+    json_builder_add_string_value(nodes_builder, channel_semantic_type);
+    json_builder_set_member_name(nodes_builder, "channelId");
+    json_builder_add_string_value(nodes_builder, channel_ids[channel]);
+    json_builder_set_member_name(nodes_builder, "curveType");
+    json_builder_add_int_value(nodes_builder, curve_types[channel]);
+    json_builder_set_member_name(nodes_builder, "pointCount");
+    json_builder_add_int_value(nodes_builder, point_count);
+    json_builder_set_member_name(nodes_builder, "points");
+    json_builder_begin_array(nodes_builder);
+    for(gint point_index = 0; point_index < point_count; point_index++)
+    {
+      const dt_agent_curve_node_t *point = curve_points + channel * max_nodes + point_index;
+      json_builder_begin_object(nodes_builder);
+      json_builder_set_member_name(nodes_builder, "pointId");
+      g_autofree gchar *point_id = g_strdup_printf("native:point:%s:%d:%s:%d",
+                                                   module_id,
+                                                   instance_index,
+                                                   channel_ids[channel],
+                                                   point_index);
+      json_builder_add_string_value(nodes_builder, point_id);
+      json_builder_set_member_name(nodes_builder, "index");
+      json_builder_add_int_value(nodes_builder, point_index);
+      json_builder_set_member_name(nodes_builder, "x");
+      json_builder_add_double_value(nodes_builder, point->x);
+      json_builder_set_member_name(nodes_builder, "y");
+      json_builder_add_double_value(nodes_builder, point->y);
+      json_builder_end_object(nodes_builder);
+    }
+    json_builder_end_array(nodes_builder);
+    json_builder_end_object(nodes_builder);
+
+    json_builder_begin_object(edges_builder);
+    json_builder_set_member_name(edges_builder, "edgeId");
+    g_autofree gchar *edge_id = g_strdup_printf("native:edge:%s:%d:%s",
+                                                module_id,
+                                                instance_index,
+                                                channel_ids[channel]);
+    json_builder_add_string_value(edges_builder, edge_id);
+    json_builder_set_member_name(edges_builder, "edgeType");
+    json_builder_add_string_value(edges_builder, "contains");
+    json_builder_set_member_name(edges_builder, "fromNodeId");
+    json_builder_add_string_value(edges_builder, module_node_id);
+    json_builder_set_member_name(edges_builder, "toNodeId");
+    json_builder_add_string_value(edges_builder, channel_node_id);
+    json_builder_end_object(edges_builder);
+  }
+
+  if(!appended)
+    return FALSE;
+
+  json_builder_begin_object(subgraphs_builder);
+  json_builder_set_member_name(subgraphs_builder, "subgraphId");
+  g_autofree gchar *subgraph_id = g_strdup_printf("native:subgraph:%s:%d", module_id, instance_index);
+  json_builder_add_string_value(subgraphs_builder, subgraph_id);
+  json_builder_set_member_name(subgraphs_builder, "subgraphType");
+  json_builder_add_string_value(subgraphs_builder, "native-curve-subgraph");
+  json_builder_set_member_name(subgraphs_builder, "semanticType");
+  json_builder_add_string_value(subgraphs_builder, subgraph_semantic_type);
+  json_builder_set_member_name(subgraphs_builder, "rootNodeId");
+  json_builder_add_string_value(subgraphs_builder, module_node_id);
+  json_builder_set_member_name(subgraphs_builder, "nodeIds");
+  json_builder_begin_array(subgraphs_builder);
+  json_builder_add_string_value(subgraphs_builder, module_node_id);
+  for(gint channel = 0; channel < channel_count; channel++)
+  {
+    if(CLAMP(curve_nodes[channel], 0, max_nodes) <= 0)
+      continue;
+    g_autofree gchar *channel_node_id = g_strdup_printf("native:group:%s:%d:%s",
+                                                        module_id,
+                                                        instance_index,
+                                                        channel_ids[channel]);
+    json_builder_add_string_value(subgraphs_builder, channel_node_id);
+  }
+  json_builder_end_array(subgraphs_builder);
+  json_builder_end_object(subgraphs_builder);
+  return TRUE;
+}
+
+static void _collect_native_edit_graph(const dt_develop_t *dev, dt_agent_image_state_t *state)
+{
+  if(!dev || !state)
+    return;
+
+  dt_iop_module_t *rgbcurve = NULL;
+  dt_iop_module_t *tonecurve = NULL;
+  dt_iop_module_t *basecurve = NULL;
+
+  // Native graph export only scans modules whose persistent params are actual node arrays.
+  for(const GList *module_iter = dev->iop; module_iter; module_iter = g_list_next(module_iter))
+  {
+    dt_iop_module_t *module = module_iter->data;
+    if(!module || !module->params)
+      continue;
+    if(g_strcmp0(module->op, "rgbcurve") == 0)
+      rgbcurve = module;
+    else if(g_strcmp0(module->op, "tonecurve") == 0)
+      tonecurve = module;
+    else if(g_strcmp0(module->op, "basecurve") == 0)
+      basecurve = module;
+  }
+
+  if(!rgbcurve && !tonecurve && !basecurve)
+    return;
+
+  static const char *rgbcurve_channel_ids[DT_AGENT_RGBCURVE_MAX_CHANNELS] = { "red", "green", "blue" };
+  static const char *tonecurve_channel_ids[DT_AGENT_TONECURVE_MAX_CHANNELS] = { "l", "a", "b" };
+  static const char *basecurve_channel_ids[DT_AGENT_BASECURVE_MAX_CHANNELS] = { "master", "reserved-1", "reserved-2" };
+
+  JsonBuilder *nodes_builder = json_builder_new();
+  JsonBuilder *edges_builder = json_builder_new();
+  JsonBuilder *subgraphs_builder = json_builder_new();
+  json_builder_begin_array(nodes_builder);
+  json_builder_begin_array(edges_builder);
+  json_builder_begin_array(subgraphs_builder);
+
+  gboolean appended = FALSE;
+  if(rgbcurve)
+  {
+    const dt_agent_rgbcurve_params_t *params = (const dt_agent_rgbcurve_params_t *)rgbcurve->params;
+    appended = _append_native_curve_module(nodes_builder,
+                                           edges_builder,
+                                           subgraphs_builder,
+                                           "rgbcurve",
+                                           "rgb curve",
+                                           "rgbcurve-module",
+                                           "rgbcurve-subgraph",
+                                           rgbcurve_channel_ids,
+                                           DT_AGENT_RGBCURVE_MAX_CHANNELS,
+                                           rgbcurve->multi_priority,
+                                           params->curve_num_nodes,
+                                           params->curve_type,
+                                           &params->curve_nodes[0][0],
+                                           DT_AGENT_RGBCURVE_MAXNODES)
+               || appended;
+  }
+  if(tonecurve)
+  {
+    const dt_agent_tonecurve_params_t *params = (const dt_agent_tonecurve_params_t *)tonecurve->params;
+    appended = _append_native_curve_module(nodes_builder,
+                                           edges_builder,
+                                           subgraphs_builder,
+                                           "tonecurve",
+                                           "tone curve",
+                                           "tonecurve-module",
+                                           "tonecurve-subgraph",
+                                           tonecurve_channel_ids,
+                                           DT_AGENT_TONECURVE_MAX_CHANNELS,
+                                           tonecurve->multi_priority,
+                                           params->tonecurve_nodes,
+                                           params->tonecurve_type,
+                                           &params->tonecurve[0][0],
+                                           DT_AGENT_TONECURVE_MAXNODES)
+               || appended;
+  }
+  if(basecurve)
+  {
+    const dt_agent_basecurve_params_t *params = (const dt_agent_basecurve_params_t *)basecurve->params;
+    appended = _append_native_curve_module(nodes_builder,
+                                           edges_builder,
+                                           subgraphs_builder,
+                                           "basecurve",
+                                           "base curve",
+                                           "basecurve-module",
+                                           "basecurve-subgraph",
+                                           basecurve_channel_ids,
+                                           DT_AGENT_BASECURVE_MAX_CHANNELS,
+                                           basecurve->multi_priority,
+                                           params->basecurve_nodes,
+                                           params->basecurve_type,
+                                           &params->basecurve[0][0],
+                                           DT_AGENT_BASECURVE_MAXNODES)
+               || appended;
+  }
+
+  json_builder_end_array(nodes_builder);
+  json_builder_end_array(edges_builder);
+  json_builder_end_array(subgraphs_builder);
+
+  if(!appended)
+  {
+    g_object_unref(nodes_builder);
+    g_object_unref(edges_builder);
+    g_object_unref(subgraphs_builder);
+    return;
+  }
+
+  JsonBuilder *builder = json_builder_new();
+  json_builder_begin_object(builder);
+  json_builder_set_member_name(builder, "graphId");
+  json_builder_add_string_value(builder, "edit-pipeline");
+  json_builder_set_member_name(builder, "graphType");
+  json_builder_add_string_value(builder, "module-property-graph");
+  json_builder_set_member_name(builder, "schemaVersion");
+  json_builder_add_string_value(builder, "native-curves-1");
+
+  JsonNode *nodes_root = json_builder_get_root(nodes_builder);
+  json_builder_set_member_name(builder, "nodes");
+  json_builder_add_value(builder, json_node_copy(nodes_root));
+  json_node_free(nodes_root);
+
+  JsonNode *edges_root = json_builder_get_root(edges_builder);
+  json_builder_set_member_name(builder, "edges");
+  json_builder_add_value(builder, json_node_copy(edges_root));
+  json_node_free(edges_root);
+
+  JsonNode *subgraphs_root = json_builder_get_root(subgraphs_builder);
+  json_builder_set_member_name(builder, "subgraphs");
+  json_builder_add_value(builder, json_node_copy(subgraphs_root));
+  json_node_free(subgraphs_root);
+
+  json_builder_end_object(builder);
+
+  JsonGenerator *generator = json_generator_new();
+  JsonNode *root = json_builder_get_root(builder);
+  json_generator_set_root(generator, root);
+  state->edit_graph_json = json_generator_to_data(generator, NULL);
+  json_node_free(root);
+  g_object_unref(nodes_builder);
+  g_object_unref(edges_builder);
+  g_object_unref(subgraphs_builder);
+  g_object_unref(generator);
+  g_object_unref(builder);
+}
+
 gboolean dt_agent_image_state_collect_from_dev(const dt_develop_t *dev,
                                                dt_agent_image_state_t *state,
                                                GError **error)
@@ -505,6 +826,7 @@ gboolean dt_agent_image_state_collect_from_dev(const dt_develop_t *dev,
   _collect_metadata(dev, state);
   _collect_controls(dev, state);
   _collect_history(dev, state);
+  _collect_native_edit_graph(dev, state);
   _snapshot_from_export_fallback(dev, state);
   return TRUE;
 }

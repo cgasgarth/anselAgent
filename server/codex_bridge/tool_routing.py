@@ -57,7 +57,7 @@ class ToolRoutingMixin:
         return [
             {
                 "name": _TOOL_GET_IMAGE_STATE,
-                "description": "Get current image state for planning: editable settings, trimmed histogram, and compact analysis signals.",
+                "description": "Get current image state for planning: authoritative editGraph, legacy editable settings, trimmed histogram, and compact analysis signals.",
                 "inputSchema": empty_object_schema,
             },
             {
@@ -72,7 +72,7 @@ class ToolRoutingMixin:
             },
             {
                 "name": _TOOL_APPLY_OPERATIONS,
-                "description": "Apply Ansel operations in the live run. You may provide raw operations or canonicalActions; supported canonical actions are bound to concrete controls before stepwise live application and render refresh.",
+                "description": "Apply Ansel edits in the live run. Prefer graph-based operations against editGraph nodes and properties, except for crop/framing where canonicalActions are usually safer and preferred. The runtime resolves graph targets to concrete controls before stepwise live application and render refresh. You may also provide canonicalActions.",
                 "inputSchema": apply_operations_schema,
             },
         ]

@@ -147,6 +147,26 @@ def build_error_payload(
 
 
 def _log_accepted_request(request: RequestEnvelope) -> None:
+    edit_graph = request.imageSnapshot.editGraph
+    edit_graph_nodes = edit_graph.get("nodes") if isinstance(edit_graph, dict) else None
+    edit_graph_edges = edit_graph.get("edges") if isinstance(edit_graph, dict) else None
+    edit_graph_subgraphs = (
+        edit_graph.get("subgraphs") if isinstance(edit_graph, dict) else None
+    )
+    edit_graph_semantic_types: list[str] = []
+    native_subgraph_count = 0
+    if isinstance(edit_graph_subgraphs, list):
+        for subgraph in edit_graph_subgraphs:
+            if not isinstance(subgraph, dict):
+                continue
+            subgraph = cast(dict[str, object], subgraph)
+            semantic_type = subgraph.get("semanticType")
+            if isinstance(semantic_type, str) and semantic_type:
+                edit_graph_semantic_types.append(semantic_type)
+            subgraph_id = subgraph.get("subgraphId")
+            if isinstance(subgraph_id, str) and subgraph_id.startswith("native:"):
+                native_subgraph_count += 1
+
     logger.info(
         "accepted_request",
         extra={
@@ -166,6 +186,23 @@ def _log_accepted_request(request: RequestEnvelope) -> None:
                 "editableSettingCount": len(request.imageSnapshot.editableSettings),
                 "historyPosition": request.imageSnapshot.historyPosition,
                 "historyCount": request.imageSnapshot.historyCount,
+                "editGraphPresent": isinstance(edit_graph, dict),
+                "editGraphSchemaVersion": edit_graph.get("schemaVersion")
+                if isinstance(edit_graph, dict)
+                else None,
+                "editGraphNodeCount": len(edit_graph_nodes)
+                if isinstance(edit_graph_nodes, list)
+                else 0,
+                "editGraphEdgeCount": len(edit_graph_edges)
+                if isinstance(edit_graph_edges, list)
+                else 0,
+                "editGraphSubgraphCount": len(edit_graph_subgraphs)
+                if isinstance(edit_graph_subgraphs, list)
+                else 0,
+                "editGraphNativeSubgraphCount": native_subgraph_count,
+                "editGraphSubgraphSemanticTypes": sorted(
+                    set(edit_graph_semantic_types)
+                ),
                 "hasPreview": request.imageSnapshot.preview is not None,
                 "hasHistogram": request.imageSnapshot.histogram is not None,
                 "messageText": request.message.text,

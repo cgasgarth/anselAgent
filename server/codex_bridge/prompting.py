@@ -10,6 +10,7 @@ from typing import cast
 from shared.protocol import AgentPlan, JsonObject, RequestEnvelope
 
 from .config import _DEFAULT_HISTOGRAM_BINS, _DEFAULT_MAX_TOOL_CALLS_WITHOUT_APPLY
+from .edit_graph import build_edit_graph
 from .errors import CodexAppServerError
 from .image_signals import build_image_analysis_signals
 from .intent_router import playbook_catalog_payload
@@ -77,6 +78,7 @@ class PromptingMixin:
         )
         image_snapshot = state_payload.get("imageSnapshot", {})
         editable_settings = image_snapshot.get("editableSettings", [])
+        edit_graph = image_snapshot.get("editGraph", {})
         setting_by_id: dict[str, JsonObject] = {}
         base_float_setting_numbers: dict[str, float] = {}
         if isinstance(editable_settings, list):
@@ -95,6 +97,14 @@ class PromptingMixin:
                                 current_number
                             )
         max_tool_calls = self._effective_tool_budget(request)
+        (
+            graph_payload,
+            graph_property_ref_to_setting_id,
+            graph_property_by_setting_id,
+        ) = build_edit_graph(request)
+        if isinstance(image_snapshot, dict):
+            image_snapshot["editGraph"] = graph_payload
+            edit_graph = graph_payload
         with self._state_lock:
             self._turn_contexts[(thread_id, turn_id)] = TurnContext(
                 base_request=request,
@@ -106,6 +116,9 @@ class PromptingMixin:
                 base_image_revision_id=request.imageSnapshot.imageRevisionId,
                 state_payload=state_payload,
                 setting_by_id=setting_by_id,
+                edit_graph=cast(JsonObject, edit_graph),
+                graph_property_ref_to_setting_id=graph_property_ref_to_setting_id,
+                graph_property_by_setting_id=graph_property_by_setting_id,
                 base_float_setting_numbers=base_float_setting_numbers,
                 live_run_enabled=request.refinement.enabled,
                 max_tool_calls=max_tool_calls,
@@ -244,6 +257,8 @@ class PromptingMixin:
                 compact_setting["defaultBool"] = setting.defaultBool
             compact_settings.append(compact_setting)
 
+        edit_graph, _, _ = build_edit_graph(request)
+
         metadata = request.imageSnapshot.metadata
         metadata_payload: JsonObject = {
             "width": metadata.width,
@@ -265,6 +280,7 @@ class PromptingMixin:
             "imageSnapshot": {
                 "imageRevisionId": request.imageSnapshot.imageRevisionId,
                 "metadata": metadata_payload,
+                "editGraph": edit_graph,
                 "editableSettings": compact_settings,
                 "histogram": self._trim_histogram_payload(request),
                 "analysisSignals": (

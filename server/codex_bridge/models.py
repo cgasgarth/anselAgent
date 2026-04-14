@@ -62,6 +62,9 @@ class TurnContext:
     base_image_revision_id: str
     state_payload: JsonObject
     setting_by_id: dict[str, JsonObject]
+    edit_graph: JsonObject
+    graph_property_ref_to_setting_id: dict[str, str]
+    graph_property_by_setting_id: dict[str, JsonObject]
     base_float_setting_numbers: dict[str, float]
     live_run_enabled: bool
     max_tool_calls: int
