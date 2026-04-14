@@ -2111,6 +2111,79 @@ def test_apply_operations_tool_binds_canonical_actions_in_live_mode(
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 
 
+def test_apply_operations_tool_accepts_mixed_raw_and_canonical_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request_with_canonical_controls()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-1", "turn-1", request, data_url)  # type: ignore[attr-defined]
+    sent_payloads: list[dict] = []
+
+    def _capture(payload):  # type: ignore[no-untyped-def]
+        sent_payloads.append(payload)
+
+    bridge._send_json_locked = _capture  # type: ignore[method-assign,attr-defined]
+    try:
+        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        assert turn_context is not None
+
+        def _mock_wait(timeout=None, *, context=turn_context):
+            context.rendered_preview_bytes = b"fake-preview-stage-mixed"
+            return True
+
+        monkeypatch.setattr(turn_context.render_event, "wait", _mock_wait)
+
+        bridge._handle_server_request_locked(  # type: ignore[attr-defined]
+            {
+                "jsonrpc": "2.0",
+                "id": 1191,
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "callId": "call-apply-mixed",
+                    "tool": _TOOL_APPLY_OPERATIONS,
+                    "arguments": {
+                        "operations": [
+                            {
+                                "kind": "set-float",
+                                "target": {
+                                    "type": "ansel-action",
+                                    "settingId": "setting.colorequal.sat-blue",
+                                    "actionPath": "iop/colorequal/sat_blue",
+                                },
+                                "value": {"mode": "set", "number": 0.25},
+                            }
+                        ],
+                        "canonicalActions": [
+                            {
+                                "action": "adjust-exposure",
+                                "exposureEv": 0.4,
+                            }
+                        ],
+                    },
+                },
+            }
+        )
+
+        result = sent_payloads[0]["result"]
+        assert result["success"] is True
+        assert "Applied 2 operations" in result["contentItems"][0]["text"]
+        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        assert turn_context is not None
+        assert turn_context.setting_by_id["setting.exposure.primary"][
+            "currentNumber"
+        ] == pytest.approx(0.4)
+        assert turn_context.setting_by_id["setting.colorequal.sat-blue"][
+            "currentNumber"
+        ] == pytest.approx(0.25)
+    finally:
+        bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+
+
 def test_apply_operations_tool_reports_crop_bounding_box_as_unsupported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

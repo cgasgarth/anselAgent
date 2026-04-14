@@ -120,6 +120,20 @@ Evaluation harness details are documented in `docs/evaluation-harness.md`.
 
 Upstream tracking details are documented in `docs/upstream-ansel.md`.
 
+This repo tracks Ansel through a git remote named `upstream`:
+
+```bash
+git remote add upstream https://github.com/aurelienpierreeng/ansel.git
+git fetch upstream
+```
+
+Review the current delta from upstream with:
+
+```bash
+git log --oneline --left-right --cherry upstream/master...HEAD
+git diff upstream/master...HEAD
+```
+
 Check the vendored Ansel tree against the tracked upstream release with:
 
 ```bash

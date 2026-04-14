@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 
 from server.bridge_types import RequestProgressPayload
@@ -36,8 +38,133 @@ def _infer_goal_delta(request: RequestEnvelope) -> float:
     return 0.7
 
 
+def _configured_operations() -> list[dict]:
+    raw = os.environ.get("ANSEL_AGENT_TEST_MOCK_OPERATIONS_JSON", "").strip()
+    if not raw:
+        return []
+
+    payload = json.loads(raw)
+    if not isinstance(payload, list):
+        raise ValueError("ANSEL_AGENT_TEST_MOCK_OPERATIONS_JSON must be a JSON array")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _matches_selector(setting, selector: dict) -> bool:
+    module_ids = selector.get("moduleIds")
+    if isinstance(module_ids, list) and module_ids:
+        if setting.moduleId not in {
+            value for value in module_ids if isinstance(value, str)
+        }:
+            return False
+
+    module_label_contains = selector.get("moduleLabelContains")
+    if isinstance(module_label_contains, str) and module_label_contains:
+        if module_label_contains.lower() not in setting.moduleLabel.lower():
+            return False
+
+    label_contains = selector.get("labelContains")
+    if isinstance(label_contains, str) and label_contains:
+        if label_contains.lower() not in setting.label.lower():
+            return False
+
+    action_path = selector.get("actionPath")
+    if isinstance(action_path, str) and action_path:
+        if setting.actionPath != action_path:
+            return False
+
+    kind = selector.get("kind")
+    if isinstance(kind, str) and kind:
+        if setting.kind != kind:
+            return False
+
+    return True
+
+
+def _find_setting(request: RequestEnvelope, selector: dict):
+    for setting in request.imageSnapshot.editableSettings:
+        if _matches_selector(setting, selector):
+            return setting
+    return None
+
+
+def _operation_value(config: dict, *, kind: str) -> dict:
+    value = config.get("value")
+    if not isinstance(value, dict):
+        raise ValueError("configured mock operation is missing a value object")
+
+    normalized = dict(value)
+    if "mode" not in normalized and kind in {"set-choice", "set-bool"}:
+        normalized["mode"] = "set"
+    return normalized
+
+
+def _configured_plan(request: RequestEnvelope) -> AgentPlan | None:
+    configured = _configured_operations()
+    if not configured:
+        return None
+
+    if request.refinement.enabled and request.refinement.passIndex > 1:
+        return AgentPlan.model_validate(
+            {
+                "assistantText": f"Mock pass {request.refinement.passIndex}: verified configured settings.",
+                "continueRefining": False,
+                "operations": [],
+            }
+        )
+
+    operations: list[dict] = []
+    for index, item in enumerate(configured, start=1):
+        selector = item.get("selector")
+        if not isinstance(selector, dict):
+            raise ValueError("configured mock operation is missing a selector object")
+
+        setting = _find_setting(request, selector)
+        if setting is None:
+            raise ValueError(
+                f"configured mock operation selector did not match any editable setting: {selector}"
+            )
+
+        operations.append(
+            {
+                "operationId": f"mock-configured-{request.refinement.passIndex}-{index}",
+                "sequence": index,
+                "kind": setting.kind,
+                "target": {
+                    "type": "ansel-action",
+                    "actionPath": setting.actionPath,
+                    "settingId": setting.settingId,
+                },
+                "value": _operation_value(item, kind=setting.kind),
+                "reason": item.get("reason")
+                or "Deterministic configured smoke-test operation.",
+                "constraints": {
+                    "onOutOfRange": "clamp",
+                    "onRevisionMismatch": "fail",
+                },
+            }
+        )
+
+    return AgentPlan.model_validate(
+        {
+            "assistantText": f"Mock configured edit: applying {len(operations)} settings.",
+            "continueRefining": request.refinement.enabled
+            and request.refinement.maxPasses > 1,
+            "operations": operations,
+        }
+    )
+
+
 class MockPlannerBridge:
     def plan(self, request: RequestEnvelope) -> CodexTurnResult:
+        configured_plan = _configured_plan(request)
+        if configured_plan is not None:
+            return CodexTurnResult(
+                plan=configured_plan,
+                thread_id=f"mock-thread-{request.session.conversationId}",
+                turn_id=f"mock-turn-{request.session.turnId}",
+                raw_message=configured_plan.model_dump_json(),
+            )
+
         exposure_target = _pick_exposure_setting(request)
         if not exposure_target:
             plan = AgentPlan.model_validate(

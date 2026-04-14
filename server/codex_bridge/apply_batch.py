@@ -34,15 +34,32 @@ def prepare_apply_batch(
         return None, "apply_operations canonicalActions must be an array."
     if not raw_operations and not raw_canonical_actions:
         return None, "apply_operations requires operations and/or canonicalActions."
-    if raw_operations and raw_canonical_actions:
-        return (
-            None,
-            "apply_operations accepts raw operations or canonicalActions, not both in the same call.",
-        )
 
+    warnings: list[str] = []
+    combined_operations: list[JsonObject] = []
     if raw_canonical_actions:
-        return _prepare_canonical_batch(context, raw_canonical_actions)
-    return _prepare_raw_batch(context, raw_operations, normalize_operation)
+        canonical_batch, canonical_error = _prepare_canonical_batch(
+            context, raw_canonical_actions
+        )
+        if canonical_error:
+            return None, canonical_error
+        assert canonical_batch is not None
+        combined_operations.extend(canonical_batch.normalized_batch)
+        warnings.extend(canonical_batch.render_warnings)
+    if raw_operations:
+        raw_batch, raw_error = _prepare_raw_batch(
+            context,
+            raw_operations,
+            normalize_operation,
+            sequence_base=context.next_operation_sequence + len(combined_operations),
+        )
+        if raw_error:
+            return None, raw_error
+        assert raw_batch is not None
+        combined_operations.extend(raw_batch.normalized_batch)
+        warnings.extend(raw_batch.render_warnings)
+    _renumber_batch_operations(combined_operations, context.next_operation_sequence)
+    return PreparedApplyBatch(combined_operations, warnings), None
 
 
 def _prepare_canonical_batch(
@@ -76,6 +93,8 @@ def _prepare_raw_batch(
     context: TurnContext,
     raw_operations: Sequence[object],
     normalize_operation: Callable[[JsonObject, int], tuple[JsonObject, str | None]],
+    *,
+    sequence_base: int,
 ) -> tuple[PreparedApplyBatch | None, str | None]:
     normalized_batch: list[JsonObject] = []
     for index, raw_operation in enumerate(raw_operations):
@@ -83,9 +102,27 @@ def _prepare_raw_batch(
             return None, "Every apply_operations entry must be an object."
         normalized_operation, error = normalize_operation(
             cast(JsonObject, raw_operation),
-            context.next_operation_sequence + index,
+            sequence_base + index,
         )
         if error:
             return None, error
         normalized_batch.append(normalized_operation)
     return PreparedApplyBatch(normalized_batch, []), None
+
+
+def _renumber_batch_operations(
+    operations: list[JsonObject], start_sequence: int
+) -> None:
+    seen_operation_ids: set[str] = set()
+    for index, operation in enumerate(operations):
+        candidate_operation_id = str(
+            operation.get("operationId") or f"apply-op-{start_sequence + index}"
+        )
+        operation_id = candidate_operation_id
+        duplicate_index = 2
+        while operation_id in seen_operation_ids:
+            operation_id = f"{candidate_operation_id}-{duplicate_index}"
+            duplicate_index += 1
+        seen_operation_ids.add(operation_id)
+        operation["operationId"] = operation_id
+        operation["sequence"] = start_sequence + index

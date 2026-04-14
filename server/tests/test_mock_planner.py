@@ -111,3 +111,133 @@ def test_mock_planner_splits_multi_turn_response_across_two_passes() -> None:
     assert first.plan.operations[0].value.number == 0.42
     assert second.plan.continueRefining is False
     assert second.plan.operations[0].value.number == 0.28
+
+
+def test_mock_planner_uses_configured_setting_operations(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "ANSEL_AGENT_TEST_MOCK_OPERATIONS_JSON",
+        """
+[
+  {
+    "selector": {
+      "moduleIds": ["exposure"],
+      "labelContains": "Exposure",
+      "kind": "set-float"
+    },
+    "value": {
+      "mode": "set",
+      "number": 0.7
+    }
+  },
+  {
+    "selector": {
+      "moduleIds": ["colorbalancergb"],
+      "labelContains": "Saturation formula",
+      "kind": "set-choice"
+    },
+    "value": {
+      "choiceValue": 0
+    }
+  }
+]
+""".strip(),
+    )
+
+    planner = MockPlannerBridge()
+    payload = _sample_request_payload()
+    payload["refinement"] = {
+        "mode": "multi-turn",
+        "enabled": True,
+        "maxPasses": 5,
+        "passIndex": 1,
+        "goalText": "Run configured settings verification.",
+    }
+    payload["capabilityManifest"]["targets"].append(
+        {
+            "moduleId": "colorbalancergb",
+            "moduleLabel": "color balance rgb",
+            "capabilityId": "colorbalancergb.saturation-formula",
+            "label": "Saturation formula",
+            "kind": "set-choice",
+            "targetType": "ansel-action",
+            "actionPath": "iop/colorbalancergb/saturation_formula",
+            "supportedModes": ["set"],
+            "choices": [
+                {"choiceValue": 0, "choiceId": "jzazbz", "label": "JzAzBz"},
+                {"choiceValue": 1, "choiceId": "rgb", "label": "RGB"},
+            ],
+            "defaultChoiceValue": 0,
+        }
+    )
+    payload["imageSnapshot"]["editableSettings"].append(
+        {
+            "moduleId": "colorbalancergb",
+            "moduleLabel": "color balance rgb",
+            "settingId": "setting.colorbalancergb.saturation_formula",
+            "capabilityId": "colorbalancergb.saturation-formula",
+            "label": "Saturation formula",
+            "actionPath": "iop/colorbalancergb/saturation_formula",
+            "kind": "set-choice",
+            "supportedModes": ["set"],
+            "currentChoiceValue": 1,
+            "currentChoiceId": "rgb",
+            "choices": [
+                {"choiceValue": 0, "choiceId": "jzazbz", "label": "JzAzBz"},
+                {"choiceValue": 1, "choiceId": "rgb", "label": "RGB"},
+            ],
+            "defaultChoiceValue": 0,
+        }
+    )
+
+    result = planner.plan(RequestEnvelope.model_validate(payload))
+
+    assert result.plan.continueRefining is True
+    assert len(result.plan.operations) == 2
+    assert result.plan.operations[0].target.actionPath == "iop/exposure/exposure"
+    assert result.plan.operations[0].value.mode == "set"
+    assert result.plan.operations[0].value.number == 0.7
+    assert (
+        result.plan.operations[1].target.actionPath
+        == "iop/colorbalancergb/saturation_formula"
+    )
+    assert result.plan.operations[1].value.choiceValue == 0
+
+
+def test_mock_planner_finishes_second_pass_for_configured_operations(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "ANSEL_AGENT_TEST_MOCK_OPERATIONS_JSON",
+        """
+[
+  {
+    "selector": {
+      "moduleIds": ["exposure"],
+      "labelContains": "Exposure",
+      "kind": "set-float"
+    },
+    "value": {
+      "mode": "set",
+      "number": 0.7
+    }
+  }
+]
+""".strip(),
+    )
+
+    planner = MockPlannerBridge()
+    payload = _sample_request_payload()
+    payload["refinement"] = {
+        "mode": "multi-turn",
+        "enabled": True,
+        "maxPasses": 5,
+        "passIndex": 2,
+        "goalText": "Run configured settings verification.",
+    }
+
+    result = planner.plan(RequestEnvelope.model_validate(payload))
+
+    assert result.plan.continueRefining is False
+    assert result.plan.operations == []
