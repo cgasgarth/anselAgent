@@ -32,7 +32,6 @@ Value rules:
 - set-choice uses value.choiceValue (and choiceId when known).
 - set-bool uses value.boolValue.
 - For graph-based edits, use `target.type = "graph-control"`, `graphId = "edit-pipeline"`, and the exact provided `nodeId` + `propertyPath`.
-- For crop and framing changes, prefer canonical crop actions over raw crop graph properties. Use `crop-to-bounding-box` for subject-centric framing and `crop-normalized` for explicit edge coordinates; use low-level crop/clipping graph props only for deliberate edge-by-edge refinement.
 - For scalar fallback edits, use the exact target.settingId from editable settings.
 
 Return exactly one JSON object matching the output schema after tool calls.

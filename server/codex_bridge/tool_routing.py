@@ -72,7 +72,7 @@ class ToolRoutingMixin:
             },
             {
                 "name": _TOOL_APPLY_OPERATIONS,
-                "description": "Apply Ansel edits in the live run. Prefer graph-based operations against editGraph nodes and properties, except for crop/framing where canonicalActions are usually safer and preferred. The runtime resolves graph targets to concrete controls before stepwise live application and render refresh. You may also provide canonicalActions.",
+                "description": "Apply Ansel edits in the live run. Prefer graph-based operations against editGraph nodes and properties. Crop/framing controls are intentionally not exposed to the agent. The runtime resolves graph targets to concrete controls before stepwise live application and render refresh. You may also provide canonicalActions.",
                 "inputSchema": apply_operations_schema,
             },
         ]
