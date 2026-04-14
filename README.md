@@ -84,14 +84,14 @@ ansel/install/package/Ansel.app
 Install it into `/Applications` so it appears in Finder, Launchpad, and Spotlight:
 
 ```bash
-cp -R "/Users/cgas/Documents/Projects/anselAgent/ansel/install/package/Ansel.app" /Applications/
+cp -R "./ansel/install/package/Ansel.app" /Applications/
 ```
 
 If `Ansel.app` already exists in `/Applications`, replace it after rebuilding:
 
 ```bash
 rm -rf /Applications/Ansel.app
-cp -R "/Users/cgas/Documents/Projects/anselAgent/ansel/install/package/Ansel.app" /Applications/
+cp -R "./ansel/install/package/Ansel.app" /Applications/
 ```
 
 Typical update flow after making native Ansel changes:
@@ -99,7 +99,7 @@ Typical update flow after making native Ansel changes:
 ```bash
 npm run ansel:build:macos-bundle
 rm -rf /Applications/Ansel.app
-cp -R "/Users/cgas/Documents/Projects/anselAgent/ansel/install/package/Ansel.app" /Applications/
+cp -R "./ansel/install/package/Ansel.app" /Applications/
 ```
 
 Open the installed app with Finder or:

@@ -397,9 +397,7 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
     async def event_generator():
         bridge = get_codex_bridge()
         plan_task = asyncio.create_task(asyncio.to_thread(bridge.plan, request))
-        last_progress_signature: (
-            tuple[int, bool, str, int, int, int, int, str, str | None, bool] | None
-        ) = None
+        last_progress_signature: tuple[object, ...] | None = None
         last_progress_payload: RequestProgressPayload | None = None
 
         yield _encode_sse("accepted", {"requestId": request.requestId})
@@ -420,29 +418,45 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                 progress_payload["progressVersion"],
                 progress_payload["found"],
                 progress_payload["status"],
+                progress_payload["phase"],
                 progress_payload["toolCallsUsed"],
                 progress_payload["maxToolCalls"],
                 progress_payload["appliedOperationCount"],
                 len(progress_payload["operations"]),
                 progress_payload["message"],
                 progress_payload["lastToolName"],
+                progress_payload["lastActionSummary"],
+                progress_payload["lastVerifierSummary"],
+                tuple(progress_payload["traceSummary"]),
                 progress_payload["requiresRenderCallback"],
+                json.dumps(progress_payload["tokenUsageLast"], separators=(",", ":"))
+                if progress_payload["tokenUsageLast"] is not None
+                else None,
+                json.dumps(progress_payload["tokenUsageTotal"], separators=(",", ":"))
+                if progress_payload["tokenUsageTotal"] is not None
+                else None,
             )
             if progress_signature != last_progress_signature:
                 last_progress_signature = progress_signature
                 last_progress_payload = {
                     "found": progress_payload["found"],
                     "status": progress_payload["status"],
+                    "phase": progress_payload["phase"],
                     "toolCallsUsed": progress_payload["toolCallsUsed"],
                     "maxToolCalls": progress_payload["maxToolCalls"],
                     "appliedOperationCount": progress_payload["appliedOperationCount"],
                     "operations": list(progress_payload["operations"]),
                     "message": progress_payload["message"],
                     "lastToolName": progress_payload["lastToolName"],
+                    "lastActionSummary": progress_payload["lastActionSummary"],
+                    "lastVerifierSummary": progress_payload["lastVerifierSummary"],
+                    "traceSummary": list(progress_payload["traceSummary"]),
                     "progressVersion": progress_payload["progressVersion"],
                     "requiresRenderCallback": progress_payload[
                         "requiresRenderCallback"
                     ],
+                    "tokenUsageLast": progress_payload["tokenUsageLast"],
+                    "tokenUsageTotal": progress_payload["tokenUsageTotal"],
                 }
                 yield _encode_sse("progress", progress_payload)
 
@@ -456,6 +470,7 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                 {
                     "found": last_progress_payload["found"],
                     "status": last_progress_payload["status"],
+                    "phase": last_progress_payload["phase"],
                     "toolCallsUsed": last_progress_payload["toolCallsUsed"],
                     "maxToolCalls": last_progress_payload["maxToolCalls"],
                     "appliedOperationCount": last_progress_payload[
@@ -464,13 +479,19 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                     "operations": list(last_progress_payload["operations"]),
                     "message": last_progress_payload["message"],
                     "lastToolName": last_progress_payload["lastToolName"],
+                    "lastActionSummary": last_progress_payload["lastActionSummary"],
+                    "lastVerifierSummary": last_progress_payload["lastVerifierSummary"],
+                    "traceSummary": list(last_progress_payload["traceSummary"]),
                     "progressVersion": last_progress_payload["progressVersion"],
                     "requiresRenderCallback": False,
+                    "tokenUsageLast": last_progress_payload["tokenUsageLast"],
+                    "tokenUsageTotal": last_progress_payload["tokenUsageTotal"],
                 }
                 if last_progress_payload is not None
                 else {
                     "found": True,
                     "status": "running",
+                    "phase": "running",
                     "toolCallsUsed": 0,
                     "maxToolCalls": request.refinement.maxPasses
                     if request.refinement.enabled
@@ -481,13 +502,27 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                     "operations": [],
                     "message": "Waiting for Codex turn output",
                     "lastToolName": None,
+                    "lastActionSummary": None,
+                    "lastVerifierSummary": None,
+                    "traceSummary": ["Waiting for Codex turn output"],
                     "progressVersion": 0,
                     "requiresRenderCallback": False,
+                    "tokenUsageLast": None,
+                    "tokenUsageTotal": None,
                 }
             )
             completion_progress["found"] = True
             completion_progress["status"] = "completed"
+            completion_progress["phase"] = "completed"
             completion_progress["message"] = "Codex plan completed"
+            completion_progress["traceSummary"] = [
+                "Codex plan completed",
+                *[
+                    entry
+                    for entry in completion_progress["traceSummary"]
+                    if entry != "Codex plan completed"
+                ],
+            ]
             completion_progress["progressVersion"] = (
                 completion_progress["progressVersion"] + 1
             )

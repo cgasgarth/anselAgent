@@ -39,6 +39,8 @@ class ActiveRequestState:
     message: str = "Request accepted"
     last_tool_name: str | None = None
     progress_version: int = 0
+    token_usage_last: dict[str, object] | None = None
+    token_usage_total: dict[str, object] | None = None
 
     @property
     def cancel_key(self) -> CancelRequestKey:

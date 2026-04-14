@@ -335,14 +335,20 @@ class StubBridge:
             return {
                 "found": False,
                 "status": "not_found",
+                "phase": "not_found",
                 "toolCallsUsed": 0,
                 "maxToolCalls": 0,
                 "appliedOperationCount": 0,
                 "operations": [],
                 "message": "No active request found for that requestId.",
                 "lastToolName": None,
+                "lastActionSummary": None,
+                "lastVerifierSummary": None,
+                "traceSummary": [],
                 "progressVersion": 0,
                 "requiresRenderCallback": False,
+                "tokenUsageLast": None,
+                "tokenUsageTotal": None,
             }
 
         index = min(self.progress_index, len(self.progress_events) - 1)
@@ -872,26 +878,56 @@ async def test_chat_stream_emits_progress_events(
             {
                 "found": True,
                 "status": "running",
+                "phase": "running",
                 "toolCallsUsed": 1,
                 "maxToolCalls": 10,
                 "appliedOperationCount": 0,
                 "operations": [],
                 "message": "Handled tool get_preview_image (1/10); 0 live edits",
                 "lastToolName": "get_preview_image",
+                "lastActionSummary": None,
+                "lastVerifierSummary": None,
+                "traceSummary": [
+                    "Handled tool get_preview_image (1/10); 0 live edits",
+                    "Last tool: get_preview_image",
+                ],
                 "progressVersion": 1,
                 "requiresRenderCallback": False,
+                "tokenUsageLast": None,
+                "tokenUsageTotal": None,
             },
             {
                 "found": True,
                 "status": "running",
+                "phase": "running",
                 "toolCallsUsed": 2,
                 "maxToolCalls": 10,
                 "appliedOperationCount": 1,
                 "operations": [],
                 "message": "Handled tool apply_operations (2/10); 1 live edits",
                 "lastToolName": "apply_operations",
+                "lastActionSummary": "Lowered exposure by 0.3 EV",
+                "lastVerifierSummary": "Highlights stayed controlled.",
+                "traceSummary": [
+                    "Handled tool apply_operations (2/10); 1 live edits",
+                    "Last tool: apply_operations",
+                    "Latest edit: Lowered exposure by 0.3 EV",
+                    "Verifier: Highlights stayed controlled.",
+                ],
                 "progressVersion": 2,
                 "requiresRenderCallback": False,
+                "tokenUsageLast": {
+                    "inputTokens": 200,
+                    "outputTokens": 50,
+                    "reasoningOutputTokens": 25,
+                    "totalTokens": 250,
+                },
+                "tokenUsageTotal": {
+                    "inputTokens": 400,
+                    "outputTokens": 80,
+                    "reasoningOutputTokens": 30,
+                    "totalTokens": 480,
+                },
             },
         ],
         plan_delay_seconds=0.6,
@@ -915,8 +951,16 @@ async def test_chat_stream_emits_progress_events(
     assert "event: progress" in stream_text
     assert '"toolCallsUsed":1' in stream_text
     assert '"toolCallsUsed":2' in stream_text
+    assert '"phase":"running"' in stream_text
     assert '"lastToolName":"get_preview_image"' in stream_text
     assert '"lastToolName":"apply_operations"' in stream_text
+    assert '"lastActionSummary":"Lowered exposure by 0.3 EV"' in stream_text
+    assert '"lastVerifierSummary":"Highlights stayed controlled."' in stream_text
+    assert (
+        '"traceSummary":["Handled tool apply_operations (2/10); 1 live edits"'
+        in stream_text
+    )
+    assert '"reasoningOutputTokens":25' in stream_text
 
 
 @pytest.mark.anyio

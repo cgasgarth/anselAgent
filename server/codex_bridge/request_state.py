@@ -50,6 +50,46 @@ def build_output_schema(agent_plan_type: type[BaseModel]) -> JsonObject:
 
 class RequestStateMixin:
     @staticmethod
+    def _empty_progress_payload(message: str) -> RequestProgressPayload:
+        return {
+            "found": False,
+            "status": "not_found",
+            "phase": "not_found",
+            "toolCallsUsed": 0,
+            "maxToolCalls": 0,
+            "appliedOperationCount": 0,
+            "operations": [],
+            "message": message,
+            "lastToolName": None,
+            "lastActionSummary": None,
+            "lastVerifierSummary": None,
+            "traceSummary": [],
+            "progressVersion": 0,
+            "requiresRenderCallback": False,
+            "tokenUsageLast": None,
+            "tokenUsageTotal": None,
+        }
+
+    @staticmethod
+    def _build_trace_summary(
+        *,
+        message: str,
+        last_tool_name: str | None,
+        last_action_summary: str | None,
+        last_verifier_summary: str | None,
+    ) -> list[str]:
+        trace_summary: list[str] = []
+        if message:
+            trace_summary.append(message)
+        if last_tool_name:
+            trace_summary.append(f"Last tool: {last_tool_name}")
+        if last_action_summary:
+            trace_summary.append(f"Latest edit: {last_action_summary}")
+        if last_verifier_summary:
+            trace_summary.append(f"Verifier: {last_verifier_summary}")
+        return trace_summary
+
+    @staticmethod
     def _build_output_schema() -> JsonObject:
         return build_output_schema(AgentPlan)
 
@@ -118,18 +158,9 @@ class RequestStateMixin:
         with self._state_lock:
             active_request = self._active_requests.get(request_id)
             if active_request is None:
-                return {
-                    "found": False,
-                    "status": "not_found",
-                    "toolCallsUsed": 0,
-                    "maxToolCalls": 0,
-                    "appliedOperationCount": 0,
-                    "operations": [],
-                    "message": "No active request found for that requestId.",
-                    "lastToolName": None,
-                    "progressVersion": 0,
-                    "requiresRenderCallback": False,
-                }
+                return self._empty_progress_payload(
+                    "No active request found for that requestId."
+                )
 
             if (
                 active_request.app_session_id != app_session_id
@@ -137,18 +168,9 @@ class RequestStateMixin:
                 or active_request.conversation_id != conversation_id
                 or active_request.client_turn_id != turn_id
             ):
-                return {
-                    "found": False,
-                    "status": "not_found",
-                    "toolCallsUsed": 0,
-                    "maxToolCalls": 0,
-                    "appliedOperationCount": 0,
-                    "operations": [],
-                    "message": "No active request matched the provided session identifiers.",
-                    "lastToolName": None,
-                    "progressVersion": 0,
-                    "requiresRenderCallback": False,
-                }
+                return self._empty_progress_payload(
+                    "No active request matched the provided session identifiers."
+                )
 
             context: TurnContext | None = None
             if active_request.thread_id and active_request.codex_turn_id:
@@ -159,19 +181,32 @@ class RequestStateMixin:
             operations = list(context.applied_operations) if context else []
             tool_calls_used = context.tool_calls_used if context else 0
             max_tool_calls = context.max_tool_calls if context else 0
+            last_action_summary = context.last_applied_summary if context else None
+            last_verifier_summary = context.last_verifier_summary if context else None
             return {
                 "found": True,
                 "status": active_request.status,
+                "phase": active_request.status,
                 "toolCallsUsed": tool_calls_used,
                 "maxToolCalls": max_tool_calls,
                 "appliedOperationCount": len(operations),
                 "operations": operations,
                 "message": active_request.message,
                 "lastToolName": active_request.last_tool_name,
+                "lastActionSummary": last_action_summary,
+                "lastVerifierSummary": last_verifier_summary,
+                "traceSummary": self._build_trace_summary(
+                    message=active_request.message,
+                    last_tool_name=active_request.last_tool_name,
+                    last_action_summary=last_action_summary,
+                    last_verifier_summary=last_verifier_summary,
+                ),
                 "progressVersion": active_request.progress_version,
                 "requiresRenderCallback": context.requires_render_callback
                 if context
                 else False,
+                "tokenUsageLast": active_request.token_usage_last,
+                "tokenUsageTotal": active_request.token_usage_total,
             }
 
     def _is_cancelled(self, active_request: ActiveRequestState) -> bool:
@@ -245,6 +280,21 @@ class RequestStateMixin:
                         active_request.last_tool_name = last_tool_name
                     active_request.progress_version += 1
                     return
+
+    def _set_active_request_token_usage_locked(
+        self,
+        request_id: str,
+        *,
+        token_usage_last: JsonObject | None,
+        token_usage_total: JsonObject | None,
+    ) -> None:
+        with self._state_lock:
+            active_request = self._active_requests.get(request_id)
+            if active_request is None:
+                return
+            active_request.token_usage_last = token_usage_last
+            active_request.token_usage_total = token_usage_total
+            active_request.progress_version += 1
 
     def provide_render_callback(
         self,
