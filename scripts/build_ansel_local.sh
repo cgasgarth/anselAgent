@@ -14,6 +14,11 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo
 USE_CCACHE="${ANSEL_USE_CCACHE:-1}"
 SKIP_CONFIG="${ANSEL_SKIP_CONFIG:-0}"
 INSTALL_BUILD="${ANSEL_INSTALL:-1}"
+MACOS_BUNDLE="${ANSEL_MACOS_BUNDLE:-0}"
+
+if [[ "$MACOS_BUNDLE" == "1" ]]; then
+  exec "$SCRIPT_DIR/build_ansel_macos_bundle.sh" "$@"
+fi
 
 build_args=()
 cmake_args=()

@@ -7,14 +7,14 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
 
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/ansel/build-master}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$REPO_ROOT/ansel/.install-master}"
-RUNTIME_DIR="${RUNTIME_DIR:-$REPO_ROOT/.ansel-local}"
-CONFIG_DIR="${CONFIG_DIR:-$RUNTIME_DIR/config}"
-CACHE_DIR="${CACHE_DIR:-$RUNTIME_DIR/cache}"
-ANSEL_LIBRARY_FILE="${ANSEL_LIBRARY_FILE:-$RUNTIME_DIR/library.db}"
+BUNDLE_APP="${BUNDLE_APP:-$REPO_ROOT/ansel/install/package/Ansel.app}"
 ANSEL_AGENT_SERVER_TIMEOUT_SECONDS="${ANSEL_AGENT_SERVER_TIMEOUT_SECONDS:-600}"
-ANSEL_LOG_FILE="${ANSEL_LOG_FILE:-$RUNTIME_DIR/ansel.log}"
 FOREGROUND="${ANSEL_FOREGROUND:-0}"
 RUN_FROM_BUILD_DIR="${ANSEL_RUN_FROM_BUILD_DIR:-0}"
+MACOS_BUNDLE="${ANSEL_MACOS_BUNDLE:-0}"
+ISOLATE_RUNTIME="${ANSEL_ISOLATE_RUNTIME:-1}"
+FRESH_RUNTIME="${ANSEL_FRESH_RUNTIME:-0}"
+RUNTIME_NAME="${ANSEL_RUNTIME_NAME:-}"
 
 args=()
 while [[ $# -gt 0 ]]; do
@@ -34,16 +34,54 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
-
 ANSEL_ROOT="$INSTALL_PREFIX"
 ANSEL_BIN="$ANSEL_ROOT/bin/ansel"
+
+if [[ "$MACOS_BUNDLE" == "1" ]]; then
+  ANSEL_BIN="$BUNDLE_APP/Contents/MacOS/ansel"
+  if [[ ! -x "$ANSEL_BIN" ]]; then
+    echo "Missing macOS app bundle executable: $ANSEL_BIN" >&2
+    echo "Run 'npm run ansel:build:macos-bundle' first." >&2
+    exit 1
+  fi
+fi
 
 if [[ "$RUN_FROM_BUILD_DIR" == "1" ]]; then
   ANSEL_BIN="$BUILD_DIR/src/ansel"
 elif [[ ! -x "$ANSEL_BIN" ]] && [[ -x "$BUILD_DIR/src/ansel" ]]; then
   ANSEL_BIN="$BUILD_DIR/src/ansel"
 fi
+
+if [[ -z "$RUNTIME_NAME" ]]; then
+  runtime_tag="default"
+  if [[ -e "$ANSEL_BIN" ]]; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      runtime_tag="$(basename "$ANSEL_BIN").$(stat -f '%m' "$ANSEL_BIN")"
+    else
+      runtime_tag="$(basename "$ANSEL_BIN").$(stat -c '%Y' "$ANSEL_BIN")"
+    fi
+  fi
+  RUNTIME_NAME="$runtime_tag"
+fi
+
+if [[ -z "${RUNTIME_DIR:-}" ]]; then
+  if [[ "$ISOLATE_RUNTIME" == "1" ]]; then
+    RUNTIME_DIR="$REPO_ROOT/.ansel-local/$RUNTIME_NAME"
+  else
+    RUNTIME_DIR="$REPO_ROOT/.ansel-local"
+  fi
+fi
+
+CONFIG_DIR="${CONFIG_DIR:-$RUNTIME_DIR/config}"
+CACHE_DIR="${CACHE_DIR:-$RUNTIME_DIR/cache}"
+ANSEL_LIBRARY_FILE="${ANSEL_LIBRARY_FILE:-$RUNTIME_DIR/library.db}"
+ANSEL_LOG_FILE="${ANSEL_LOG_FILE:-$RUNTIME_DIR/ansel.log}"
+
+if [[ "$FRESH_RUNTIME" == "1" ]]; then
+  rm -rf "$RUNTIME_DIR"
+fi
+
+mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
 
 cmd=(
   "$ANSEL_BIN"
@@ -80,6 +118,19 @@ fi
 
 if [[ "$ANSEL_BIN" == "$BUILD_DIR/src/ansel" ]]; then
   export DYLD_LIBRARY_PATH="$BUILD_DIR/src${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+fi
+
+if [[ "$MACOS_BUNDLE" == "1" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
+  cmd=(
+    open
+    -a "$BUNDLE_APP"
+    --args
+    --conf "plugins/ai/agent/timeout_seconds=$ANSEL_AGENT_SERVER_TIMEOUT_SECONDS"
+    --configdir "$CONFIG_DIR"
+    --cachedir "$CACHE_DIR"
+    --library "$ANSEL_LIBRARY_FILE"
+    ${args[@]+"${args[@]}"}
+  )
 fi
 
 if [[ "$FOREGROUND" == "1" ]]; then

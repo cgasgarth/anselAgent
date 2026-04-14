@@ -179,6 +179,7 @@ static void _dev_change_image(dt_view_t *self, const int32_t imgid);
 static int _change_scaling(dt_develop_t *dev, const float point[2], const float new_scaling);
 static void _release_expose_source_caches(void);
 static void _agent_chat_window_write_config(GtkWidget *widget);
+static gboolean _agent_chat_window_reflow_idle(gpointer user_data);
 static void _agent_chat_update_sensitivity(dt_develop_t *dev);
 static void _agent_chat_set_status(dt_develop_t *dev, const char *status);
 static void _agent_chat_set_error(dt_develop_t *dev, const char *error);
@@ -1458,14 +1459,8 @@ static int32_t _agent_chat_current_image_id(void)
 static gboolean _agent_chat_scroll_to_end_idle(gpointer user_data)
 {
   dt_develop_t *dev = (dt_develop_t *)user_data;
-  if(!dev || !GTK_IS_TEXT_VIEW(dev->agent_chat.conversation_view))
+  if(!dev || !GTK_IS_WIDGET(dev->agent_chat.conversation_view))
     return G_SOURCE_REMOVE;
-
-  GtkTextView *view = GTK_TEXT_VIEW(dev->agent_chat.conversation_view);
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer(view);
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(buffer, &end);
-  gtk_text_view_scroll_to_iter(view, &end, 0.0, FALSE, 0.0, 1.0);
 
   GtkWidget *scroll = gtk_widget_get_ancestor(dev->agent_chat.conversation_view,
                                               GTK_TYPE_SCROLLED_WINDOW);
@@ -1481,7 +1476,7 @@ static gboolean _agent_chat_scroll_to_end_idle(gpointer user_data)
 
 static void _agent_chat_scroll_to_end(dt_develop_t *dev)
 {
-  if(!dev || !GTK_IS_TEXT_VIEW(dev->agent_chat.conversation_view))
+  if(!dev || !GTK_IS_WIDGET(dev->agent_chat.conversation_view))
     return;
 
   g_idle_add(_agent_chat_scroll_to_end_idle, dev);
@@ -1489,28 +1484,28 @@ static void _agent_chat_scroll_to_end(dt_develop_t *dev)
 
 static void _agent_chat_replace_transcript(dt_develop_t *dev, const char *text)
 {
-  if(!dev || !GTK_IS_TEXT_VIEW(dev->agent_chat.conversation_view))
+  if(!dev || !GTK_IS_LABEL(dev->agent_chat.conversation_view))
     return;
 
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(dev->agent_chat.conversation_view));
-  gtk_text_buffer_set_text(buffer, text ? text : "", -1);
+  gtk_label_set_text(GTK_LABEL(dev->agent_chat.conversation_view), text ? text : "");
   _agent_chat_scroll_to_end(dev);
 }
 
 static void _agent_chat_append_message(dt_develop_t *dev, const char *speaker, const char *message)
 {
-  if(!dev || !GTK_IS_TEXT_VIEW(dev->agent_chat.conversation_view))
+  if(!dev || !GTK_IS_LABEL(dev->agent_chat.conversation_view))
     return;
 
-  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(dev->agent_chat.conversation_view));
-  GtkTextIter end;
-  gtk_text_buffer_get_end_iter(buffer, &end);
-
-  if(gtk_text_buffer_get_char_count(buffer) > 0)
-    gtk_text_buffer_insert(buffer, &end, "\n\n", -1);
-
+  const char *existing = gtk_label_get_text(GTK_LABEL(dev->agent_chat.conversation_view));
   gchar *line = g_strdup_printf(_("%s: %s"), speaker ? speaker : "", message ? message : "");
-  gtk_text_buffer_insert(buffer, &end, line, -1);
+  gchar *transcript = NULL;
+  if(existing && existing[0] != '\0')
+    transcript = g_strdup_printf("%s\n\n%s", existing, line);
+  else
+    transcript = g_strdup(line);
+
+  gtk_label_set_text(GTK_LABEL(dev->agent_chat.conversation_view), transcript);
+  g_free(transcript);
   g_free(line);
   _agent_chat_scroll_to_end(dev);
 }
@@ -2011,8 +2006,9 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
 
       dev->agent_chat.active_request_live_applied_count = progress->response.operations->len;
       dt_dev_write_history(dev, FALSE);
-      dt_dev_pop_history_items(dev);
       dt_dev_history_gui_update(dev);
+      dt_dev_history_pixelpipe_update(dev, FALSE);
+      dt_dev_history_notify_change(dev, dev->image_storage.id);
       dt_control_queue_redraw_center();
       if(progress->requires_render_callback)
         dev->agent_chat.pending_mid_turn_render = TRUE;
@@ -2131,8 +2127,9 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
 
     dev->agent_chat.active_request_live_applied_count = result->response.operations->len;
     dt_dev_write_history(dev, FALSE);
-    dt_dev_pop_history_items(dev);
     dt_dev_history_gui_update(dev);
+    dt_dev_history_pixelpipe_update(dev, FALSE);
+    dt_dev_history_notify_change(dev, dev->image_storage.id);
     dt_control_queue_redraw_center();
 
     gchar *status = g_strdup_printf(execution_report.applied_count == 1
@@ -2250,6 +2247,17 @@ static void _agent_chat_window_write_config(GtkWidget *widget)
   dt_conf_set_int("plugins/darkroom/agent_chat/window_h", allocation.height);
 }
 
+static gboolean _agent_chat_window_reflow_idle(gpointer user_data)
+{
+  GtkWidget *widget = GTK_WIDGET(user_data);
+  if(!GTK_IS_WINDOW(widget) || !gtk_widget_get_visible(widget))
+    return G_SOURCE_REMOVE;
+
+  _agent_chat_window_init(widget);
+  gtk_widget_queue_resize(widget);
+  return G_SOURCE_REMOVE;
+}
+
 static gboolean _agent_chat_window_delete_callback(GtkWidget *widget, GdkEvent *event, gpointer user_data)
 {
   dt_develop_t *dev = (dt_develop_t *)user_data;
@@ -2270,6 +2278,7 @@ static void _agent_chat_display_window(dt_develop_t *dev)
     _agent_chat_window_init(dev->agent_chat.floating_window);
 
   gtk_widget_show_all(dev->agent_chat.floating_window);
+  g_idle_add(_agent_chat_window_reflow_idle, dev->agent_chat.floating_window);
   gtk_window_present(GTK_WINDOW(dev->agent_chat.floating_window));
 }
 
@@ -2914,6 +2923,9 @@ void gui_init(dt_view_t *self)
     gtk_widget_set_name(dev->agent_chat.floating_window, "agent_chat_window");
     gtk_window_set_icon_name(GTK_WINDOW(dev->agent_chat.floating_window), "ansel");
     gtk_window_set_title(GTK_WINDOW(dev->agent_chat.floating_window), _("ansel - live edit chat"));
+    gtk_widget_set_size_request(dev->agent_chat.floating_window,
+                                DT_PIXEL_APPLY_DPI(504),
+                                DT_PIXEL_APPLY_DPI(624));
     gtk_window_set_transient_for(GTK_WINDOW(dev->agent_chat.floating_window),
                                  GTK_WINDOW(dt_ui_main_window(darktable.gui->ui)));
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dev->agent_chat.floating_window), TRUE);
@@ -2922,7 +2934,6 @@ void gui_init(dt_view_t *self)
 
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_PIXEL_APPLY_DPI(6));
     gtk_container_set_border_width(GTK_CONTAINER(outer), DT_PIXEL_APPLY_DPI(14));
-    gtk_widget_set_size_request(outer, DT_PIXEL_APPLY_DPI(480), DT_PIXEL_APPLY_DPI(560));
     gtk_container_add(GTK_CONTAINER(dev->agent_chat.floating_window), outer);
 
     GtkWidget *title_label = gtk_label_new(_("Multi-turn live edit chat"));
@@ -2963,29 +2974,42 @@ void gui_init(dt_view_t *self)
     gtk_widget_set_visible(dev->agent_chat.error_label, FALSE);
     gtk_box_pack_start(GTK_BOX(outer), dev->agent_chat.error_label, FALSE, FALSE, 0);
 
+    GtkWidget *content = gtk_box_new(GTK_ORIENTATION_VERTICAL, DT_PIXEL_APPLY_DPI(6));
+    gtk_widget_set_vexpand(content, TRUE);
+    gtk_widget_set_hexpand(content, TRUE);
+    gtk_box_pack_start(GTK_BOX(outer), content, TRUE, TRUE, 0);
+
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), DT_PIXEL_APPLY_DPI(320));
     gtk_widget_set_vexpand(scroll, TRUE);
     gtk_widget_set_hexpand(scroll, TRUE);
-    gtk_box_pack_start(GTK_BOX(outer), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(content), scroll, TRUE, TRUE, 0);
 
-    dev->agent_chat.conversation_view = gtk_text_view_new();
-    gtk_text_view_set_monospace(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), TRUE);
-    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), GTK_WRAP_WORD_CHAR);
-    gtk_text_view_set_editable(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), FALSE);
-    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), FALSE);
-    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), DT_PIXEL_APPLY_DPI(8));
-    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), DT_PIXEL_APPLY_DPI(8));
-    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), DT_PIXEL_APPLY_DPI(8));
-    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(dev->agent_chat.conversation_view), DT_PIXEL_APPLY_DPI(8));
+    dev->agent_chat.conversation_view = gtk_label_new("");
+    gtk_widget_set_vexpand(dev->agent_chat.conversation_view, TRUE);
+    gtk_widget_set_hexpand(dev->agent_chat.conversation_view, TRUE);
+    gtk_widget_set_halign(dev->agent_chat.conversation_view, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(dev->agent_chat.conversation_view, GTK_ALIGN_START);
+    gtk_label_set_xalign(GTK_LABEL(dev->agent_chat.conversation_view), 0.0f);
+    gtk_label_set_yalign(GTK_LABEL(dev->agent_chat.conversation_view), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(dev->agent_chat.conversation_view), TRUE);
+    gtk_label_set_line_wrap_mode(GTK_LABEL(dev->agent_chat.conversation_view), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_selectable(GTK_LABEL(dev->agent_chat.conversation_view), TRUE);
+    gtk_widget_set_margin_start(dev->agent_chat.conversation_view, DT_PIXEL_APPLY_DPI(8));
+    gtk_widget_set_margin_end(dev->agent_chat.conversation_view, DT_PIXEL_APPLY_DPI(8));
+    gtk_widget_set_margin_top(dev->agent_chat.conversation_view, DT_PIXEL_APPLY_DPI(8));
+    gtk_widget_set_margin_bottom(dev->agent_chat.conversation_view, DT_PIXEL_APPLY_DPI(8));
     gtk_container_add(GTK_CONTAINER(scroll), dev->agent_chat.conversation_view);
 
     GtkWidget *input_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, DT_PIXEL_APPLY_DPI(6));
-    gtk_box_pack_start(GTK_BOX(outer), input_row, FALSE, FALSE, 0);
+    gtk_widget_set_hexpand(input_row, TRUE);
+    gtk_box_pack_start(GTK_BOX(content), input_row, FALSE, FALSE, 0);
 
     dev->agent_chat.input_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(dev->agent_chat.input_entry),
                                    _("describe the result you want; Ansel will refine with live edits"));
+    gtk_widget_set_hexpand(dev->agent_chat.input_entry, TRUE);
     dt_accels_disconnect_on_text_input(dev->agent_chat.input_entry);
     g_signal_connect(G_OBJECT(dev->agent_chat.input_entry), "activate",
                      G_CALLBACK(_agent_chat_entry_activate), dev);
