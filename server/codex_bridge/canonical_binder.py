@@ -6,6 +6,7 @@ from shared.canonical_plan import CanonicalEditAction
 from shared.protocol import AgentPlan, EditableSetting, RequestEnvelope
 
 from .config import logger
+from .crop_binding import bind_crop_action
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,10 @@ def bind_canonical_plan(request: RequestEnvelope, plan: AgentPlan) -> AgentPlan:
         return plan
 
     result = bind_canonical_actions(
-        request.imageSnapshot.editableSettings, canonical_actions
+        request.imageSnapshot.editableSettings,
+        canonical_actions,
+        image_width=request.imageSnapshot.metadata.width,
+        image_height=request.imageSnapshot.metadata.height,
     )
     bound_operations = result.operations
     failures = result.failures
@@ -62,12 +66,20 @@ def bind_canonical_plan(request: RequestEnvelope, plan: AgentPlan) -> AgentPlan:
 def bind_canonical_actions(
     settings: list[EditableSetting],
     canonical_actions: list[CanonicalEditAction],
+    *,
+    image_width: int | float | None = None,
+    image_height: int | float | None = None,
 ) -> _BindingResult:
     bound_operations: list[dict[str, object]] = []
     failures: list[str] = []
 
     for action in canonical_actions:
-        result = _bind_action(settings, action)
+        result = _bind_action(
+            settings,
+            action,
+            image_width=image_width,
+            image_height=image_height,
+        )
         bound_operations.extend(result.operations)
         failures.extend(result.failures)
 
@@ -101,7 +113,11 @@ def _normalize_operations_with_unique_ids(
 
 
 def _bind_action(
-    settings: list[EditableSetting], action: CanonicalEditAction
+    settings: list[EditableSetting],
+    action: CanonicalEditAction,
+    *,
+    image_width: int | float | None = None,
+    image_height: int | float | None = None,
 ) -> _BindingResult:
     if action.action == "adjust-exposure":
         return _bind_exposure(settings, action)
@@ -115,12 +131,14 @@ def _bind_action(
         return _bind_grade(settings, action)
     if action.action == "rotate":
         return _bind_rotate(settings, action)
-    if action.action == "crop-normalized":
-        return _BindingResult([], ["crop-normalized is not supported in anselAgent"])
-    if action.action == "crop-to-bounding-box":
-        return _BindingResult(
-            [], ["crop-to-bounding-box is not supported in anselAgent"]
+    if action.action in {"crop-normalized", "crop-to-bounding-box"}:
+        operations, failures = bind_crop_action(
+            settings,
+            action,
+            image_width=image_width,
+            image_height=image_height,
         )
+        return _BindingResult(operations, failures)
     return _BindingResult([], [f"unsupported canonical action {action.action}"])
 
 

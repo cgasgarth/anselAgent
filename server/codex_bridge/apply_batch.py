@@ -75,6 +75,8 @@ def _prepare_canonical_batch(
     binding_result = bind_canonical_actions(
         list(context.base_request.imageSnapshot.editableSettings),
         canonical_actions,
+        image_width=context.base_request.imageSnapshot.metadata.width,
+        image_height=context.base_request.imageSnapshot.metadata.height,
     )
     if binding_result.failures and not binding_result.operations:
         return None, "; ".join(binding_result.failures)

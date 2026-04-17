@@ -48,6 +48,8 @@ class CanonicalEditAction(CanonicalBaseModel):
     boxWidth: float | None = None
     boxHeight: float | None = None
     paddingRatio: float | None = None
+    aspectRatioWidth: float | None = None
+    aspectRatioHeight: float | None = None
     rationale: str | None = None
 
     @model_validator(mode="after")
@@ -131,5 +133,17 @@ class CanonicalEditAction(CanonicalBaseModel):
             if self.paddingRatio is not None and not 0.0 <= self.paddingRatio <= 1.0:
                 raise ValueError(
                     "crop-to-bounding-box paddingRatio must be within [0, 1]"
+                )
+            if (self.aspectRatioWidth is None) != (self.aspectRatioHeight is None):
+                raise ValueError(
+                    "crop-to-bounding-box aspectRatioWidth and aspectRatioHeight must be provided together"
+                )
+            if self.aspectRatioWidth is not None and self.aspectRatioWidth <= 0.0:
+                raise ValueError(
+                    "crop-to-bounding-box aspectRatioWidth must be greater than 0"
+                )
+            if self.aspectRatioHeight is not None and self.aspectRatioHeight <= 0.0:
+                raise ValueError(
+                    "crop-to-bounding-box aspectRatioHeight must be greater than 0"
                 )
         return self
