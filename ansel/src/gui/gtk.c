@@ -1012,14 +1012,11 @@ int dt_gui_gtk_init(dt_gui_gtk_t *gui)
     g_snprintf(gui->gtkrc, sizeof(gui->gtkrc), "ansel");
 
 #ifdef MAC_INTEGRATION
+  GtkWidget *osx_menu_bar = NULL;
 #ifdef GTK_TYPE_OSX_APPLICATION
   GtkOSXApplication *OSXApp = g_object_new(GTK_TYPE_OSX_APPLICATION, NULL);
-  gtk_osxapplication_set_menu_bar(
-      OSXApp, GTK_MENU_SHELL(gtk_menu_bar_new())); // needed for default entries to show up
 #else
   GtkosxApplication *OSXApp = g_object_new(GTKOSX_TYPE_APPLICATION, NULL);
-  gtkosx_application_set_menu_bar(
-      OSXApp, GTK_MENU_SHELL(gtk_menu_bar_new())); // needed for default entries to show up
 #endif
   g_signal_connect(G_OBJECT(OSXApp), "NSApplicationBlockTermination", G_CALLBACK(_osx_quit_callback), NULL);
   g_signal_connect(G_OBJECT(OSXApp), "NSApplicationOpenFile", G_CALLBACK(_osx_openfile_callback), NULL);
@@ -1065,6 +1062,18 @@ int dt_gui_gtk_init(dt_gui_gtk_t *gui)
 
   // Initializing widgets
   _init_widgets(gui);
+
+#ifdef MAC_INTEGRATION
+  osx_menu_bar = dt_ui_get_menu_bar(gui->ui);
+  if(GTK_IS_MENU_SHELL(osx_menu_bar))
+  {
+#ifdef GTK_TYPE_OSX_APPLICATION
+    gtk_osxapplication_set_menu_bar(OSXApp, GTK_MENU_SHELL(osx_menu_bar));
+#else
+    gtkosx_application_set_menu_bar(OSXApp, GTK_MENU_SHELL(osx_menu_bar));
+#endif
+  }
+#endif
 
   //init overlay colors
   dt_guides_set_overlay_colors();

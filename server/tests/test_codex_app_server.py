@@ -3253,3 +3253,95 @@ def test_token_usage_notification_ignores_other_turns() -> None:
 
     assert turn_state["token_usage_last"] is None
     assert turn_state["token_usage_total"] is None
+
+
+def test_turn_start_idle_timeout_is_more_lenient_than_mid_turn_timeout() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+
+    assert (
+        bridge._idle_timeout_seconds_for_method("turn/start")  # type: ignore[attr-defined]
+        > bridge._idle_timeout_seconds_for_method("thread/item/updated")  # type: ignore[attr-defined]
+    )
+
+
+def test_run_turn_allows_long_initial_silence_before_declaring_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    active_request = bridge._register_request(request)  # type: ignore[attr-defined]
+    plan_json = AgentPlan.model_validate(
+        {
+            "assistantText": "Apply a gentle exposure lift.",
+            "continueRefining": False,
+            "operations": [],
+            "canonicalActions": [],
+        }
+    ).model_dump_json()
+
+    monotonic_values = iter([0.0, 0.0, 130.0, 130.0, 130.5, 131.0, 131.0, 131.0])
+    read_messages = iter(
+        [
+            None,
+            {
+                "method": "thread/item/completed",
+                "params": {"threadId": "thread-1", "turnId": "turn-1"},
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        "server.codex_bridge.turns.time.monotonic", lambda: next(monotonic_values)
+    )
+    monkeypatch.setattr(
+        bridge, "_preview_data_url", lambda request: "data:image/jpeg;base64,ZmFrZQ=="
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_build_turn_input",
+        lambda request, preview_data_url: [{"type": "text", "text": "hello"}],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_send_request_locked",
+        lambda method, params, deadline, active_request: {
+            "result": {"turn": {"id": "turn-1"}}
+        },
+    )
+    monkeypatch.setattr(
+        bridge, "_register_turn_context", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge, "_set_active_request_token_usage_locked", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_read_message_locked",
+        lambda deadline, active_request, max_wait_seconds=None: next(read_messages),
+    )
+
+    def _complete_turn(message, state):  # type: ignore[no-untyped-def]
+        state["completed"] = True
+        state["final_message"] = plan_json
+
+    monkeypatch.setattr(bridge, "_handle_message_locked", _complete_turn)
+
+    try:
+        result = bridge._run_turn_locked(  # type: ignore[attr-defined]
+            "thread-1",
+            request,
+            _DEFAULT_MODEL,
+            _DEFAULT_REASONING_EFFORT,
+            deadline=999.0,
+            active_request=active_request,
+            thread_reused=False,
+        )
+    finally:
+        bridge._unregister_request(request.requestId)  # type: ignore[attr-defined]
+
+    assert result.turn_id == "turn-1"
+    assert result.plan.assistantText == "Apply a gentle exposure lift."

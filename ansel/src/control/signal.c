@@ -366,6 +366,9 @@ void dt_control_signal_raise(const dt_control_signal_t *ctlsig, dt_signal_t sign
     g_value_init(&instance_and_params[i], type);
     switch(type)
     {
+      case G_TYPE_INT:
+        g_value_set_int(&instance_and_params[i], va_arg(extra_args, gint));
+        break;
       case G_TYPE_UINT:
         g_value_set_uint(&instance_and_params[i], va_arg(extra_args, guint));
         break;

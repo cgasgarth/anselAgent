@@ -180,6 +180,7 @@ static int _change_scaling(dt_develop_t *dev, const float point[2], const float 
 static void _release_expose_source_caches(void);
 static void _agent_chat_window_write_config(GtkWidget *widget);
 static gboolean _agent_chat_window_reflow_idle(gpointer user_data);
+static gboolean _agent_chat_focus_input_idle(gpointer user_data);
 static void _agent_chat_update_sensitivity(dt_develop_t *dev);
 static void _agent_chat_set_status(dt_develop_t *dev, const char *status);
 static void _agent_chat_set_error(dt_develop_t *dev, const char *error);
@@ -2039,9 +2040,15 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
   }
 
   if(progress->status && progress->status[0] != '\0')
-    _agent_chat_set_status(dev, progress->status);
+  {
+    if(progress->found)
+      _agent_chat_set_status(dev, progress->status);
+  }
   else if(progress->message && progress->message[0] != '\0')
-    _agent_chat_set_status(dev, progress->message);
+  {
+    if(progress->found)
+      _agent_chat_set_status(dev, progress->message);
+  }
 }
 
 static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
@@ -2258,6 +2265,23 @@ static gboolean _agent_chat_window_reflow_idle(gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
+static gboolean _agent_chat_focus_input_idle(gpointer user_data)
+{
+  dt_develop_t *dev = (dt_develop_t *)user_data;
+  if(!dev || !dev->agent_chat.floating_window || !dev->agent_chat.input_entry)
+    return G_SOURCE_REMOVE;
+
+  if(!gtk_widget_get_visible(dev->agent_chat.floating_window)
+     || !gtk_widget_get_visible(dev->agent_chat.input_entry)
+     || !gtk_widget_get_sensitive(dev->agent_chat.input_entry))
+    return G_SOURCE_REMOVE;
+
+  gtk_window_set_focus(GTK_WINDOW(dev->agent_chat.floating_window), dev->agent_chat.input_entry);
+  gtk_widget_grab_focus(dev->agent_chat.input_entry);
+  gtk_editable_set_position(GTK_EDITABLE(dev->agent_chat.input_entry), -1);
+  return G_SOURCE_REMOVE;
+}
+
 static gboolean _agent_chat_window_delete_callback(GtkWidget *widget, GdkEvent *event, gpointer user_data)
 {
   dt_develop_t *dev = (dt_develop_t *)user_data;
@@ -2280,6 +2304,7 @@ static void _agent_chat_display_window(dt_develop_t *dev)
   gtk_widget_show_all(dev->agent_chat.floating_window);
   g_idle_add(_agent_chat_window_reflow_idle, dev->agent_chat.floating_window);
   gtk_window_present(GTK_WINDOW(dev->agent_chat.floating_window));
+  g_idle_add(_agent_chat_focus_input_idle, dev);
 }
 
 static void _agent_chat_toggle_callback(GtkToggleButton *button, gpointer user_data)
@@ -2288,8 +2313,6 @@ static void _agent_chat_toggle_callback(GtkToggleButton *button, gpointer user_d
   if(gtk_toggle_button_get_active(button))
   {
     _agent_chat_display_window(dev);
-    if(dev->agent_chat.input_entry)
-      gtk_widget_grab_focus(dev->agent_chat.input_entry);
   }
   else if(dev && dev->agent_chat.floating_window)
   {
