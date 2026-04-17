@@ -1,0 +1,2210 @@
+version: 1
+modules:
+  - id: rawprepare
+    display_name: Raw Prepare
+    category: input
+    stage: input_prep
+    purpose: Prepare RAW sensor data before demosaic by normalizing black and white points.
+    when_to_use:
+      - Editing RAW captures.
+      - A RAW file looks technically misinterpreted or clipped.
+    avoid_when:
+      - The source is not a RAW file.
+      - The automatic camera defaults already look correct.
+    primary_controls:
+      - raw black and white point handling: sensor normalization and clipping anchors
+    agent_guidance: Leave it automatic unless the RAW decode is visibly wrong.
+    common_user_phrases:
+      - fix the raw decode
+      - something is wrong with the raw baseline
+    prerequisites:
+      - demosaic
+    conflicts_or_overlaps:
+      - basicadj
+    output_type: technical
+    confidence_notes: RAW-only technical foundation.
+  - id: soften
+    display_name: Soften
+    category: effect
+    stage: local_edit
+    purpose: Add a soft-focus glow and reduce microcontrast for a dreamy rendering.
+    when_to_use:
+      - The user wants a dreamy portrait look.
+      - Harsh detail should be intentionally softened.
+    avoid_when:
+      - The user wants crisp realism.
+      - Another glow effect like bloom already provides the look.
+    primary_controls:
+      - softness: amount of diffusion and glow
+    agent_guidance: Keep the effect subtle and avoid stacking with bloom unless the look is explicitly stylized.
+    common_user_phrases:
+      - make it dreamy
+      - soften the portrait
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - bloom
+      - blurs
+    output_type: creative
+    confidence_notes: Easy to overdo on detailed subjects.
+  - id: bloom
+    display_name: Bloom
+    category: effect
+    stage: local_edit
+    purpose: Add glow around bright regions for an ethereal or high-key effect.
+    when_to_use:
+      - The user wants glow around highlights.
+      - A stylized dreamy finish is requested.
+    avoid_when:
+      - Highlights already lack definition.
+      - The user wants a clean, realistic render.
+    primary_controls:
+      - bloom strength: size and intensity of highlight glow
+    agent_guidance: Use late in the workflow and keep it restrained unless the brief is overtly stylized.
+    common_user_phrases:
+      - add glow
+      - make the highlights bloom
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - soften
+      - diffuse
+    output_type: creative
+    confidence_notes: Can quickly wash out highlight structure.
+  - id: highpass
+    display_name: Highpass
+    category: tone
+    stage: local_edit
+    purpose: Extract high-frequency detail for edge emphasis and frequency-separation workflows.
+    when_to_use:
+      - Fine edge detail needs emphasis.
+      - A frequency-separation style workflow is intended.
+    avoid_when:
+      - Noise is already prominent.
+      - Diffuse or sharpen already handles the detail goal.
+    primary_controls:
+      - radius: size of extracted high-frequency detail
+    agent_guidance: Prefer diffuse or a modest sharpen pass first; use this only for specific detail workflows.
+    common_user_phrases:
+      - bring out edges
+      - emphasize fine detail
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - sharpen
+      - diffuse
+    output_type: technical
+    confidence_notes: Amplifies noise easily.
+  - id: lowpass
+    display_name: Lowpass
+    category: effect
+    stage: local_edit
+    purpose: Blur low-frequency structure for smoothing, glow, or separation-style effects.
+    when_to_use:
+      - Broad smoothing is desired.
+      - A stylized separation workflow needs a blurred base.
+    avoid_when:
+      - Detail retention is important.
+      - The goal is corrective denoise rather than an effect.
+    primary_controls:
+      - blur radius: extent of low-frequency smoothing
+    agent_guidance: Treat it as a niche effect or workflow utility, not a first-line correction tool.
+    common_user_phrases:
+      - smooth the tones
+      - blur the broad shapes
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - blurs
+      - bilateral
+    output_type: creative
+    confidence_notes: Can flatten images quickly.
+  - id: shadhi
+    display_name: Shadows And Highlights
+    category: tone
+    stage: tone_mapping
+    purpose: Adjust shadows and highlights using the older legacy approach.
+    when_to_use:
+      - Older edit compatibility is needed.
+      - The user explicitly wants the legacy module behavior.
+    avoid_when:
+      - Tone equalizer can solve the problem more cleanly.
+      - A natural result matters more than matching an old workflow.
+    primary_controls:
+      - shadow and highlight amounts: tonal lift and compression
+    agent_guidance: Prefer toneequal in modern workflows and use this sparingly to avoid halos.
+    common_user_phrases:
+      - open the shadows
+      - tame the highlights
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - toneequal
+      - filmicrgb
+    output_type: corrective
+    confidence_notes: Legacy module prone to halo artifacts.
+  - id: colorreconstruct
+    display_name: Color Reconstruction
+    category: color
+    stage: scene_linear
+    purpose: Rebuild highlight color where structure remains but chroma has washed out.
+    when_to_use:
+      - Bright highlights have lost color but still show detail.
+      - Highlight areas look grey or colorless after clipping.
+    avoid_when:
+      - Raw clipped-channel recovery is the real issue.
+      - Highlights are not actually damaged.
+    primary_controls:
+      - reconstruction method: how lost color is inferred
+    agent_guidance: Use after technical highlight handling when only color repair is still needed.
+    common_user_phrases:
+      - bring color back to the highlights
+      - the bright areas look washed out
+    prerequisites:
+      - highlights
+    conflicts_or_overlaps:
+      - highlights
+    output_type: corrective
+    confidence_notes: Best for highlight chroma repair, not full tone recovery.
+  - id: tonemap
+    display_name: Tone Mapping
+    category: tone
+    stage: tone_mapping
+    purpose: Apply an older or alternative HDR-style tone-mapping look.
+    when_to_use:
+      - A stylized HDR rendering is requested.
+      - The user wants a legacy tone-mapped look.
+    avoid_when:
+      - Natural scene-referred rendering is the goal.
+      - Filmic RGB already provides the global mapping.
+    primary_controls:
+      - compression strength: how aggressively dynamic range is flattened
+    agent_guidance: Use only on explicit HDR-style intent and avoid combining with other strong tone mappers.
+    common_user_phrases:
+      - make it hdr
+      - give it a dramatic mapped look
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - filmicrgb
+      - basecurve
+      - globaltonemap
+    output_type: creative
+    confidence_notes: Often looks synthetic if pushed.
+  - id: tonecurve
+    display_name: Tone Curve
+    category: tone
+    stage: tone_mapping
+    purpose: Shape global luminance with a legacy tone curve.
+    when_to_use:
+      - The user explicitly wants curve-based global contrast.
+      - A legacy workflow or old edit needs reproduction.
+    avoid_when:
+      - Filmic RGB and tone equalizer already define the tone strategy.
+      - Base curve is also being used aggressively.
+    primary_controls:
+      - curve points: tonal redistribution across the range
+    agent_guidance: Use one primary curve strategy only and keep it out of modern filmic-first flows unless requested.
+    common_user_phrases:
+      - add an s-curve
+      - use a classic tone curve
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - basecurve
+      - rgbcurve
+      - levels
+      - filmicrgb
+    output_type: corrective
+    confidence_notes: Legacy overlap-heavy tone control.
+  - id: colisa
+    display_name: Brightness Contrast Saturation
+    category: tone
+    stage: tone_mapping
+    purpose: Provide a quick legacy brightness, contrast, and saturation adjustment.
+    when_to_use:
+      - Reproducing an older quick-adjust workflow.
+      - The user wants a rough all-in-one tweak.
+    avoid_when:
+      - Dedicated exposure and color tools are available.
+      - Precise control is needed.
+    primary_controls:
+      - brightness contrast saturation: rough global utility adjustments
+    agent_guidance: Low-priority convenience tool; prefer more specific modules in modern edits.
+    common_user_phrases:
+      - quick contrast boost
+      - rough global tweak
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - exposure
+      - colorbalancergb
+      - vibrance
+    output_type: corrective
+    confidence_notes: Legacy convenience module.
+  - id: gamma
+    display_name: Gamma
+    category: output
+    stage: output_prep
+    purpose: Apply a technical gamma adjustment for special display or output cases.
+    when_to_use:
+      - A special gamma conversion workflow is required.
+      - An output/display mismatch needs technical correction.
+    avoid_when:
+      - Normal scene-referred editing is in progress.
+      - The user just wants brighter or darker tones.
+    primary_controls:
+      - gamma: nonlinear output brightness response
+    agent_guidance: Do not treat this as a creative brightness control.
+    common_user_phrases:
+      - adjust gamma
+      - match display gamma
+    prerequisites:
+      - colorout
+    conflicts_or_overlaps:
+      - profile_gamma
+      - exposure
+    output_type: technical
+    confidence_notes: Technical utility, rarely the right aesthetic tool.
+  - id: temperature
+    display_name: White Balance
+    category: input
+    stage: input_prep
+    purpose: Neutralize or shift the capture illuminant through white-balance controls.
+    when_to_use:
+      - The user wants the image warmer or cooler.
+      - A color cast needs technical neutralization.
+    avoid_when:
+      - The cast is intentional and belongs to creative grading.
+      - Fine palette shaping is better handled downstream.
+    primary_controls:
+      - temperature and tint: neutralization of illuminant color
+    agent_guidance: Use this first for technical white balance on RAW files before broader color grading.
+    common_user_phrases:
+      - make it warmer
+      - fix the white balance
+    prerequisites:
+      - rawprepare
+    conflicts_or_overlaps:
+      - colorbalancergb
+      - colorcorrection
+    output_type: corrective
+    confidence_notes: Best treated as technical color correction, not mood grading.
+  - id: colorcorrection
+    display_name: Color Correction
+    category: color
+    stage: color_grading
+    purpose: Apply broad legacy color correction shifts.
+    when_to_use:
+      - Reproducing an older edit.
+      - A rough legacy correction is specifically desired.
+    avoid_when:
+      - White balance is the real issue.
+      - Modern targeted color tools are available.
+    primary_controls:
+      - hue and saturation shifts: broad color correction
+    agent_guidance: Prefer temperature, color balance RGB, or color zones when they solve the problem more directly.
+    common_user_phrases:
+      - old-school color correction
+      - shift the overall color tone
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - temperature
+      - colorbalancergb
+      - colorzones
+    output_type: corrective
+    confidence_notes: Legacy broad color tool.
+  - id: basicadj
+    display_name: Basic Adjustments
+    category: tone
+    stage: tone_mapping
+    purpose: Apply a quick bundled set of basic tone and saturation controls.
+    when_to_use:
+      - A simple fast adjustment is enough.
+      - The user wants camera-JPEG-like rough tuning.
+    avoid_when:
+      - A modern scene-referred workflow is being built carefully.
+      - More precise modules are already in use.
+    primary_controls:
+      - basic exposure contrast saturation: bundled utility controls
+    agent_guidance: Use only for quick broad adjustments; prefer dedicated modules for deliberate edits.
+    common_user_phrases:
+      - basic cleanup
+      - quick overall adjustment
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - exposure
+      - basecurve
+      - colisa
+    output_type: corrective
+    confidence_notes: Utility-style module with lots of overlap.
+  - id: exposure
+    display_name: Exposure
+    category: tone
+    stage: scene_linear
+    purpose: Apply global exposure compensation and anchor midtone placement before downstream tone mapping.
+    when_to_use:
+      - The image needs to be brighter or darker overall.
+      - Underexposure or overexposure needs global correction.
+    avoid_when:
+      - The user only wants local relighting.
+      - Another issue like white balance or clipping is the true problem.
+    primary_controls:
+      - exposure compensation: global EV shift and black-level anchoring
+    agent_guidance: First global tone control in most modern workflows; keep it conservative before filmicrgb.
+    common_user_phrases:
+      - make it brighter
+      - lower the exposure
+    prerequisites:
+      - temperature
+    conflicts_or_overlaps:
+      - levels
+      - rgblevels
+      - basicadj
+    output_type: corrective
+    confidence_notes: Core foundational tone adjustment.
+  - id: equalizer
+    display_name: Contrast Equalizer
+    category: tone
+    stage: local_edit
+    purpose: Adjust detail and local contrast by scale in a wavelet-style workflow.
+    when_to_use:
+      - Older multiscale detail shaping is desired.
+      - The user wants local contrast or deblur in a legacy workflow.
+    avoid_when:
+      - Diffuse or more modern detail tools can solve it.
+      - Simple sharpening is sufficient.
+    primary_controls:
+      - scale bands: detail and contrast changes across frequencies
+    agent_guidance: Powerful but overlap-heavy; prefer diffuse for modern advanced detail control.
+    common_user_phrases:
+      - enhance local contrast
+      - sharpen by detail scales
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - diffuse
+      - atrous
+      - sharpen
+    output_type: corrective
+    confidence_notes: Legacy multiscale tool with a steeper tuning curve.
+  - id: rgbcurve
+    display_name: RGB Curve
+    category: tone
+    stage: color_grading
+    purpose: Shape contrast and color bias through per-channel RGB curves.
+    when_to_use:
+      - Precise curve-based contrast or channel shaping is needed.
+      - The user explicitly asks for RGB curve control.
+    avoid_when:
+      - Simpler tone or color tools solve the request.
+      - Multiple other endpoint or curve tools are already active.
+    primary_controls:
+      - per-channel curves: tonal and color shaping
+    agent_guidance: Use only with clear intent and avoid stacking with other strong curve modules.
+    common_user_phrases:
+      - shape the rgb curve
+      - tweak the red and blue curves
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - tonecurve
+      - levels
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Very flexible and easy to overcomplicate.
+  - id: colorbalance
+    display_name: Color Balance
+    category: color
+    stage: color_grading
+    purpose: Apply the older color-balance workflow for shadows, midtones, and highlights.
+    when_to_use:
+      - An older history stack needs compatibility.
+      - The user explicitly wants the legacy color balance module.
+    avoid_when:
+      - Color balance RGB is available.
+      - White balance is the real issue.
+    primary_controls:
+      - tonal range color balance: broad warm and cool grading
+    agent_guidance: Prefer colorbalancergb in modern workflows.
+    common_user_phrases:
+      - warm the shadows and cool the highs
+      - old color balance look
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colorbalancergb
+      - splittoningrgb
+    output_type: creative
+    confidence_notes: Legacy grading fallback.
+  - id: colorin
+    display_name: Input Color Profile
+    category: input
+    stage: input_prep
+    purpose: Convert the source image into the working color space using the input profile.
+    when_to_use:
+      - Interpreting RAW or device color correctly.
+      - Debugging profile or color pipeline issues.
+    avoid_when:
+      - The user is asking for creative color changes.
+      - The default input profile is already correct.
+    primary_controls:
+      - input profile: source color interpretation
+    agent_guidance: Treat as technical foundation and usually leave automatic.
+    common_user_phrases:
+      - use the right camera profile
+      - fix the input profile
+    prerequisites:
+      - demosaic
+    conflicts_or_overlaps:
+      - colorout
+    output_type: technical
+    confidence_notes: Usually automatic and foundational.
+  - id: colorout
+    display_name: Output Color Profile
+    category: output
+    stage: output_prep
+    purpose: Convert the working image into the final display or export output profile.
+    when_to_use:
+      - Preparing for a specific display or export target.
+      - Screen versus print output needs control.
+    avoid_when:
+      - Mid-edit creative grading is still underway.
+      - The user is asking for stylistic color changes.
+    primary_controls:
+      - output profile and rendering intent: final output conversion
+    agent_guidance: Keep this near the end of the workflow and default to standard output spaces unless the target is known.
+    common_user_phrases:
+      - export for srgb
+      - prepare for print color
+    prerequisites:
+      - filmicrgb
+    conflicts_or_overlaps:
+      - gamma
+      - profile_gamma
+    output_type: technical
+    confidence_notes: Final output-stage technical module.
+  - id: colorchecker
+    display_name: Color Checker
+    category: color
+    stage: input_prep
+    purpose: Match or calibrate colors using a known reference chart.
+    when_to_use:
+      - A color chart is present.
+      - Product or reproduction work needs repeatable color.
+    avoid_when:
+      - No reference target is available.
+      - The user wants purely creative grading.
+    primary_controls:
+      - chart matching: chart-based calibration transforms
+    agent_guidance: Use only when a physical reference exists in the image.
+    common_user_phrases:
+      - calibrate from the color checker
+      - match the chart
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colorbalance
+      - colorbalancergb
+    output_type: technical
+    confidence_notes: Reference-driven calibration tool.
+  - id: clipping
+    display_name: Clipping
+    category: diagnostic
+    stage: diagnostic
+    purpose: Show clipping or image-boundary diagnostics and utility framing controls.
+    when_to_use:
+      - Checking clipping warnings.
+      - Technical framing or boundary handling matters.
+    avoid_when:
+      - The user wants an aesthetic fix rather than analysis.
+      - Tone mapping is the actual solution.
+    primary_controls:
+      - clipping display: warning overlay and boundary handling
+    agent_guidance: Treat as support or diagnostic, not a creative correction.
+    common_user_phrases:
+      - show clipping
+      - check blown areas
+    prerequisites: []
+    conflicts_or_overlaps:
+      - overexposed
+      - rawoverexposed
+    output_type: diagnostic
+    confidence_notes: Diagnostic and utility module rather than an edit.
+  - id: crop
+    display_name: Crop
+    category: geometry
+    stage: local_edit
+    purpose: Reframe composition and aspect ratio by cropping the image.
+    when_to_use:
+      - The composition needs reframing.
+      - A target aspect ratio is required.
+    avoid_when:
+      - Perspective correction should happen first.
+      - The runtime intentionally hides crop controls from the agent.
+    primary_controls:
+      - frame bounds: composition and aspect ratio
+    agent_guidance: Conceptually use after geometry correction, but do not plan on it when crop controls are unavailable to the agent.
+    common_user_phrases:
+      - crop tighter
+      - change the aspect ratio
+    prerequisites:
+      - ashift
+      - rotatepixels
+    conflicts_or_overlaps:
+      - clipping
+    output_type: corrective
+    confidence_notes: Useful conceptually, but current agent runtime may not expose crop edits.
+  - id: sharpen
+    display_name: Sharpen
+    category: tone
+    stage: local_edit
+    purpose: Add basic edge crispness with a simple sharpening pass.
+    when_to_use:
+      - The image is mildly soft.
+      - A basic output sharpen is sufficient.
+    avoid_when:
+      - Noise is visible.
+      - Diffuse or other detail modules already shape detail strongly.
+    primary_controls:
+      - amount and radius: edge crispness
+    agent_guidance: Keep subtle and avoid stacking with aggressive diffuse or highpass work.
+    common_user_phrases:
+      - sharpen it a bit
+      - make it crisper
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - diffuse
+      - highpass
+      - equalizer
+    output_type: corrective
+    confidence_notes: Simple fallback sharpening tool.
+  - id: dither
+    display_name: Dither
+    category: output
+    stage: output_prep
+    purpose: Add dithering to reduce visible banding during output quantization.
+    when_to_use:
+      - Smooth gradients risk banding on export.
+      - Vignettes or graduated edits create posterization.
+    avoid_when:
+      - The image stays in a high-bit-depth internal workflow.
+      - No visible banding risk exists.
+    primary_controls:
+      - dithering: noise-shaped anti-banding for export
+    agent_guidance: Save this for the output stage and enable only when banding is a plausible risk.
+    common_user_phrases:
+      - prevent banding
+      - fix posterization in the gradient
+    prerequisites:
+      - finalscale
+      - colorout
+    conflicts_or_overlaps:
+      - grain
+    output_type: technical
+    confidence_notes: Output-only technical safeguard.
+  - id: monochrome
+    display_name: Monochrome
+    category: color
+    stage: color_grading
+    purpose: Convert the image to monochrome with simple color-filter style control.
+    when_to_use:
+      - The user wants a black-and-white conversion.
+      - A straightforward monochrome look is enough.
+    avoid_when:
+      - Channel Mixer RGB offers a better monochrome route.
+      - The user wants to keep the image in color.
+    primary_controls:
+      - filter response: tonal separation in black and white
+    agent_guidance: Use for simple monochrome conversion; prefer channelmixerrgb for more advanced B&W control.
+    common_user_phrases:
+      - make it black and white
+      - convert to monochrome
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - channelmixerrgb
+    output_type: creative
+    confidence_notes: Simple monochrome path.
+  - id: basecurve
+    display_name: Base Curve
+    category: tone
+    stage: tone_mapping
+    purpose: Apply a legacy display-oriented curve similar to camera JPEG rendering.
+    when_to_use:
+      - A punchy camera-like look is requested quickly.
+      - Backward compatibility with an old edit is required.
+    avoid_when:
+      - A modern filmic RGB workflow is being used.
+      - Another strong global tone-mapping strategy is already active.
+    primary_controls:
+      - curve preset and shape: camera-JPEG-like tone response
+    agent_guidance: Legacy path only; avoid pairing with filmic-style modules.
+    common_user_phrases:
+      - make it look like the camera jpeg
+      - quick punchy base look
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - filmicrgb
+      - filmic
+      - tonecurve
+    output_type: corrective
+    confidence_notes: Legacy module that conflicts with modern scene-referred mapping.
+  - id: colorzones
+    display_name: Color Zones
+    category: color
+    stage: color_grading
+    purpose: Adjust lightness, saturation, or hue selectively by color range.
+    when_to_use:
+      - A specific color family needs targeted adjustment.
+      - The user asks for selective color changes like sky or foliage only.
+    avoid_when:
+      - Broad grading is enough.
+      - White balance is the actual issue.
+    primary_controls:
+      - hue-zone curves: selective hue, saturation, and lightness changes
+    agent_guidance: Good targeted color tool when the request names a specific color range.
+    common_user_phrases:
+      - make the greens less yellow
+      - deepen only the blue sky
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colorequal
+      - colorbalancergb
+    output_type: corrective
+    confidence_notes: Strong selective color tool.
+  - id: highlights
+    display_name: Highlights
+    category: tone
+    stage: scene_linear
+    purpose: Reconstruct or tame clipped highlights before later tone mapping.
+    when_to_use:
+      - Bright areas have lost detail.
+      - The sky or speculars show channel clipping.
+    avoid_when:
+      - Highlights are not clipped.
+      - The real issue is global tone placement.
+    primary_controls:
+      - reconstruction mode and strength: clipped highlight recovery
+    agent_guidance: Use early and pair with exposure rather than as a substitute for full tone mapping.
+    common_user_phrases:
+      - recover highlights
+      - bring back detail in the sky
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - colorreconstruct
+      - filmicrgb
+    output_type: corrective
+    confidence_notes: Early corrective highlight tool.
+  - id: rawoverexposed
+    display_name: Raw Overexposed
+    category: diagnostic
+    stage: diagnostic
+    purpose: Display RAW-domain overexposure warnings for clipped sensor channels.
+    when_to_use:
+      - Sensor clipping needs diagnosis.
+      - RAW highlight risk must be inspected.
+    avoid_when:
+      - The user wants an actual correction.
+      - Processed-image clipping, not RAW clipping, is the concern.
+    primary_controls:
+      - raw clipping overlay: sensor-channel clipping display
+    agent_guidance: Diagnostic only; use it to inspect, not to fix.
+    common_user_phrases:
+      - show raw clipping
+      - check sensor overexposure
+    prerequisites: []
+    conflicts_or_overlaps:
+      - overexposed
+      - clipping
+    output_type: diagnostic
+    confidence_notes: RAW-only diagnostic overlay.
+  - id: velvia
+    display_name: Velvia
+    category: effect
+    stage: color_grading
+    purpose: Add a vivid film-like saturation and punch effect.
+    when_to_use:
+      - The user wants intense, punchy color.
+      - A stylized slide-film look is desired.
+    avoid_when:
+      - Natural color is important.
+      - Other saturation boosts are already active.
+    primary_controls:
+      - velvia amount: saturation and color-pop intensity
+    agent_guidance: Treat it as a creative effect and watch for oversaturation, especially in skin and foliage.
+    common_user_phrases:
+      - make the colors pop
+      - give it a vivid film look
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - vibrance
+      - colorbalance
+    output_type: creative
+    confidence_notes: Easy to make colors look artificial.
+  - id: vignette
+    display_name: Vignette
+    category: effect
+    stage: output_prep
+    purpose: Darken or lighten edges to direct attention inward.
+    when_to_use:
+      - The subject needs subtle emphasis.
+      - The user wants a vintage or framed look.
+    avoid_when:
+      - Lens correction already removed unwanted natural vignette and realism is preferred.
+      - The edges carry important detail that should stay even.
+    primary_controls:
+      - falloff and strength: edge brightness shaping
+    agent_guidance: Use as a finishing touch and keep it subtle unless the look is explicitly stylized.
+    common_user_phrases:
+      - add a vignette
+      - darken the edges
+    prerequisites:
+      - lens
+    conflicts_or_overlaps:
+      - graduatednd
+      - borders
+    output_type: creative
+    confidence_notes: Can look dated or obvious if overused.
+  - id: splittoning
+    display_name: Split Toning
+    category: effect
+    stage: color_grading
+    purpose: Apply legacy split toning to different tonal ranges.
+    when_to_use:
+      - An older stylized warm-cool tonal split is wanted.
+      - Matching an older split-toning workflow.
+    avoid_when:
+      - Modern RGB split toning or color balance RGB is available.
+      - The user wants neutral correction.
+    primary_controls:
+      - shadow and highlight tones: stylized tonal color separation
+    agent_guidance: Prefer splittoningrgb or colorbalancergb in modern flows.
+    common_user_phrases:
+      - warm highlights cool shadows
+      - old split-toned look
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - splittoningrgb
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Legacy creative module.
+  - id: grain
+    display_name: Grain
+    category: effect
+    stage: output_prep
+    purpose: Add a simple film-like grain texture.
+    when_to_use:
+      - The user wants an analog feel.
+      - Clean digital rendering needs organic texture.
+    avoid_when:
+      - Noise reduction is the goal.
+      - A cleaner master output is required.
+    primary_controls:
+      - grain amount and size: visible texture overlay
+    agent_guidance: Apply late and keep grain consistent with the image resolution and style.
+    common_user_phrases:
+      - add film grain
+      - make it feel analog
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - crystgrain
+      - dither
+    output_type: creative
+    confidence_notes: Deliberate texture effect, not corrective noise.
+  - id: crystgrain
+    display_name: Crystalline Grain
+    category: effect
+    stage: output_prep
+    purpose: Add a more stylized granular or crystalline texture than simple film grain.
+    when_to_use:
+      - A stronger stylized grain look is desired.
+      - The brief calls for a gritty or experimental texture.
+    avoid_when:
+      - Naturalism matters.
+      - Subtle grain is enough.
+    primary_controls:
+      - crystal grain intensity: aggressive stylized texture
+    agent_guidance: Use only for explicit creative intent and avoid combining with standard grain unless the look is deliberately heavy.
+    common_user_phrases:
+      - gritty grain
+      - stylized texture
+    prerequisites:
+      - grain
+    conflicts_or_overlaps:
+      - grain
+    output_type: creative
+    confidence_notes: Highly stylized and easy to overcook.
+  - id: clahe
+    display_name: CLAHE
+    category: tone
+    stage: local_edit
+    purpose: Boost local contrast through adaptive histogram equalization.
+    when_to_use:
+      - Flat local contrast needs a strong local boost.
+      - The user wants a punchy microcontrast effect.
+    avoid_when:
+      - Natural rendering is important.
+      - Haze removal, tone equalizer, or diffuse already provide the needed shaping.
+    primary_controls:
+      - local contrast strength: adaptive tonal equalization
+    agent_guidance: Use cautiously; it can create harsh or synthetic contrast quickly.
+    common_user_phrases:
+      - add local pop
+      - increase local contrast strongly
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - toneequal
+      - hazeremoval
+      - equalizer
+    output_type: creative
+    confidence_notes: Strong effect-like contrast tool.
+  - id: bilateral
+    display_name: Surface Blur
+    category: denoise
+    stage: local_edit
+    purpose: Smooth surfaces while trying to preserve edges.
+    when_to_use:
+      - Broad texture reduction is needed without full blur.
+      - A niche smoothing pass is needed on specific structures.
+    avoid_when:
+      - Modern denoise tools already solve the noise.
+      - Fine detail must be preserved closely.
+    primary_controls:
+      - smoothing radius: edge-preserving surface blur
+    agent_guidance: Use only for niche smoothing jobs; denoiseprofile or rawdenoise are usually better starting points.
+    common_user_phrases:
+      - smooth surfaces
+      - reduce texture without full blur
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - blurs
+      - nlmeans
+      - lowpass
+    output_type: corrective
+    confidence_notes: Utility smoother rather than a preferred general denoiser.
+  - id: profile_gamma
+    display_name: Profile Gamma
+    category: output
+    stage: output_prep
+    purpose: Apply profile and gamma conversion support for special color-management cases.
+    when_to_use:
+      - A specific profile-gamma conversion is required.
+      - Technical output correction needs this support module.
+    avoid_when:
+      - Standard colorout already handles the target.
+      - The user is asking for ordinary editing adjustments.
+    primary_controls:
+      - profile gamma mapping: technical output support
+    agent_guidance: Treat as a specialized color-management tool, not a creative control.
+    common_user_phrases:
+      - adjust profile gamma
+      - special output gamma fix
+    prerequisites:
+      - colorout
+    conflicts_or_overlaps:
+      - gamma
+    output_type: technical
+    confidence_notes: Specialized and workflow-dependent.
+  - id: colortransfer
+    display_name: Color Transfer
+    category: effect
+    stage: color_grading
+    purpose: Transfer a source image's color characteristics onto the current image.
+    when_to_use:
+      - Matching another image's palette is the goal.
+      - A reference-driven look transfer is requested.
+    avoid_when:
+      - Neutral color accuracy matters.
+      - No clear source look exists.
+    primary_controls:
+      - source palette transfer: mapping external color characteristics
+    agent_guidance: Use only with an explicit reference-driven styling goal.
+    common_user_phrases:
+      - match the color of another photo
+      - transfer that look here
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colormapping
+      - lut3d
+    output_type: creative
+    confidence_notes: Reference-dependent creative tool.
+  - id: colormapping
+    display_name: Color Mapping
+    category: effect
+    stage: color_grading
+    purpose: Map colors toward another source look or palette.
+    when_to_use:
+      - The user wants palette matching across images.
+      - A source-driven look transfer is requested.
+    avoid_when:
+      - Neutral correction is the goal.
+      - No source or target style direction is defined.
+    primary_controls:
+      - mapping transform: source-driven palette remap
+    agent_guidance: Creative reference tool; avoid if the job is standard correction.
+    common_user_phrases:
+      - map this image to that palette
+      - match the colors between shots
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colortransfer
+      - lut3d
+    output_type: creative
+    confidence_notes: Look-transfer style module.
+  - id: channelmixer
+    display_name: Channel Mixer
+    category: color
+    stage: color_grading
+    purpose: Mix image channels in the older legacy workflow.
+    when_to_use:
+      - Backward compatibility with older channel-mixer edits is needed.
+      - A legacy monochrome or channel-remap path is desired.
+    avoid_when:
+      - Channel Mixer RGB is available.
+      - Simpler color controls solve the request.
+    primary_controls:
+      - channel weights: how source channels contribute to the output
+    agent_guidance: Prefer channelmixerrgb unless you are preserving an older workflow.
+    common_user_phrases:
+      - old channel mixer look
+      - legacy black and white mix
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - channelmixerrgb
+      - monochrome
+    output_type: creative
+    confidence_notes: Legacy mixer superseded by the RGB version.
+  - id: graduatednd
+    display_name: Graduated ND
+    category: effect
+    stage: local_edit
+    purpose: Simulate a graduated neutral density filter over a broad region.
+    when_to_use:
+      - The sky or another broad zone needs darkening.
+      - A simple gradient-based balance is enough.
+    avoid_when:
+      - A complex mask shape is needed.
+      - Banding risk is high and the transition would be obvious.
+    primary_controls:
+      - gradient position and density: broad directional tone control
+    agent_guidance: Good for simple sky balancing; escalate to masked local edits for complex boundaries.
+    common_user_phrases:
+      - darken the sky
+      - add a graduated filter
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - toneequal
+      - vignette
+    output_type: corrective
+    confidence_notes: Simple local balancing tool with visible transition risk.
+  - id: relight
+    display_name: Relight
+    category: tone
+    stage: local_edit
+    purpose: Rebalance broad bright and dark regions to simulate relighting.
+    when_to_use:
+      - The image needs more depth or broad luminance rebalance.
+      - Shadow regions need gentle opening without precise masking.
+    avoid_when:
+      - Tone equalizer or local masks can target the issue better.
+      - Precise subject isolation is required.
+    primary_controls:
+      - relighting strength: broad spatial luminance rebalance
+    agent_guidance: Use moderately; toneequal is often the cleaner modern answer.
+    common_user_phrases:
+      - relight the scene
+      - make the subject pop with light
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - toneequal
+      - graduatednd
+    output_type: corrective
+    confidence_notes: Broad relighting utility, not a precise local tool.
+  - id: zonesystem
+    display_name: Zone System
+    category: tone
+    stage: tone_mapping
+    purpose: Redistribute tone by defined tonal zones.
+    when_to_use:
+      - A zone-based tonal workflow is explicitly requested.
+      - An expert legacy tonal placement approach is needed.
+    avoid_when:
+      - Tone equalizer provides the needed shaping.
+      - The user wants a modern straightforward workflow.
+    primary_controls:
+      - zone placement: tonal redistribution by zones
+    agent_guidance: Expert legacy tool; prefer toneequal unless zone-specific control is truly needed.
+    common_user_phrases:
+      - place tones by zones
+      - use a zone system approach
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - toneequal
+      - levels
+    output_type: corrective
+    confidence_notes: Powerful but niche legacy module.
+  - id: demosaic
+    display_name: Demosaic
+    category: input
+    stage: input_prep
+    purpose: Convert sensor mosaic data into RGB pixels.
+    when_to_use:
+      - RAW detail or artifact handling needs tuning.
+      - Moire, zippering, or false detail appears.
+    avoid_when:
+      - The source is not RAW.
+      - There is no visible demosaic problem.
+    primary_controls:
+      - demosaic method: trade-off between detail, color stability, and artifacts
+    agent_guidance: Technical RAW module; change it only to solve artifacts or a specific detail-rendering issue.
+    common_user_phrases:
+      - fix moire
+      - improve raw detail rendering
+    prerequisites:
+      - rawprepare
+    conflicts_or_overlaps:
+      - rawdenoise
+    output_type: technical
+    confidence_notes: RAW-only technical decode stage.
+  - id: detailmask
+    display_name: Detail Mask
+    category: mask
+    stage: local_edit
+    purpose: Build masks from image detail and structure for selective edits.
+    when_to_use:
+      - A detail-aware selective mask is needed.
+      - Edits should affect texture or edges preferentially.
+    avoid_when:
+      - A simple drawn mask is enough.
+      - The edit does not need detail awareness.
+    primary_controls:
+      - detail threshold: what structures the mask selects
+    agent_guidance: Use as support for controlled local edits rather than as an end in itself.
+    common_user_phrases:
+      - affect only the fine detail
+      - mask the texture areas
+    prerequisites:
+      - drawlayer
+    conflicts_or_overlaps:
+      - mask_manager
+    output_type: technical
+    confidence_notes: Support module for selective masking.
+  - id: rotatepixels
+    display_name: Rotate Pixels
+    category: geometry
+    stage: input_prep
+    purpose: Apply technical pixel-level rotation for alignment or sensor-specific handling.
+    when_to_use:
+      - The horizon needs a simple rotation correction.
+      - Technical pixel orientation needs adjustment.
+    avoid_when:
+      - Perspective correction is the real need.
+      - A simple orientation flip is enough.
+    primary_controls:
+      - angle: simple rotational correction
+    agent_guidance: Use for straightforward leveling, not keystone correction.
+    common_user_phrases:
+      - straighten the horizon
+      - rotate slightly
+    prerequisites: []
+    conflicts_or_overlaps:
+      - ashift
+      - flip
+    output_type: corrective
+    confidence_notes: Technical transform for simple rotation.
+  - id: scalepixels
+    display_name: Scale Pixels
+    category: output
+    stage: output_prep
+    purpose: Apply intermediate technical pixel scaling inside the pipeline.
+    when_to_use:
+      - A specialized pipeline scaling operation is needed.
+      - Technical debugging of pixel aspect or scaling is required.
+    avoid_when:
+      - Final export scaling is sufficient.
+      - The user only wants ordinary editing.
+    primary_controls:
+      - scaling factor: technical pixel resampling
+    agent_guidance: Not usually a user-facing choice; reserve for pipeline-specific needs.
+    common_user_phrases:
+      - technical scaling fix
+      - pixel aspect correction
+    prerequisites:
+      - initialscale
+    conflicts_or_overlaps:
+      - finalscale
+    output_type: technical
+    confidence_notes: Mostly internal utility.
+  - id: atrous
+    display_name: Atrous Wavelets
+    category: denoise
+    stage: local_edit
+    purpose: Manipulate detail, contrast, or denoise using an older wavelet workflow.
+    when_to_use:
+      - A legacy wavelet workflow is desired.
+      - Older local detail or denoise behavior must be reproduced.
+    avoid_when:
+      - Diffuse or dedicated denoise modules solve the task.
+      - The user wants a simpler or more modern path.
+    primary_controls:
+      - wavelet scales: multiscale contrast and noise shaping
+    agent_guidance: Legacy overlap-heavy tool; prefer diffuse or calibrated denoise when possible.
+    common_user_phrases:
+      - old wavelet detail workflow
+      - multiscale denoise
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - diffuse
+      - equalizer
+      - bilat
+    output_type: corrective
+    confidence_notes: Legacy multiscale module.
+  - id: cacorrect
+    display_name: Chromatic Aberrations
+    category: repair
+    stage: scene_linear
+    purpose: Correct chromatic aberration using the older path.
+    when_to_use:
+      - Edge fringing remains on high-contrast edges.
+      - A legacy correction path is needed.
+    avoid_when:
+      - Lens correction or cacorrectrgb solve the issue better.
+      - The fringing is actually blooming or demosaic artifact.
+    primary_controls:
+      - aberration correction: reduce edge color separation
+    agent_guidance: Prefer cacorrectrgb or lens in modern workflows.
+    common_user_phrases:
+      - fix chromatic aberration
+      - remove purple and green fringing
+    prerequisites:
+      - lens
+    conflicts_or_overlaps:
+      - cacorrectrgb
+      - defringe
+    output_type: corrective
+    confidence_notes: Legacy aberration correction path.
+  - id: overexposed
+    display_name: Overexposed
+    category: diagnostic
+    stage: diagnostic
+    purpose: Display an overexposure warning overlay on the processed image.
+    when_to_use:
+      - Processed-image highlight clipping needs inspection.
+      - A warning overlay helps evaluate blown areas.
+    avoid_when:
+      - The user wants an actual edit.
+      - RAW clipping diagnosis is the real need.
+    primary_controls:
+      - overexposure overlay: processed-image clipping display
+    agent_guidance: Diagnostic only; do not use it as the correction itself.
+    common_user_phrases:
+      - show overexposure warning
+      - check blown highlights
+    prerequisites: []
+    conflicts_or_overlaps:
+      - rawoverexposed
+      - clipping
+    output_type: diagnostic
+    confidence_notes: Analysis overlay, not an aesthetic module.
+  - id: hotpixels
+    display_name: Hot Pixels
+    category: repair
+    stage: input_prep
+    purpose: Remove isolated defective sensor pixels from RAW captures.
+    when_to_use:
+      - Bright stuck pixels or colored specks appear.
+      - Long exposures or high-ISO RAW files show sensor defects.
+    avoid_when:
+      - Texture or stars might be mistaken for defects.
+      - The source is not RAW.
+    primary_controls:
+      - defect detection: isolated-pixel cleanup
+    agent_guidance: Technical cleanup only; avoid confusing real image detail with defects.
+    common_user_phrases:
+      - remove hot pixels
+      - clean up sensor specks
+    prerequisites:
+      - rawprepare
+    conflicts_or_overlaps:
+      - spots
+    output_type: corrective
+    confidence_notes: RAW-specific sensor cleanup.
+  - id: lowlight
+    display_name: Lowlight Vision
+    category: effect
+    stage: color_grading
+    purpose: Simulate or stylize a low-light visual rendering.
+    when_to_use:
+      - A dark-scene low-light look is intentionally desired.
+      - The user wants a stylized night-vision or dim-scene rendering.
+    avoid_when:
+      - Standard exposure correction is enough.
+      - Natural color is required.
+    primary_controls:
+      - low-light effect strength: stylized dark-scene rendering
+    agent_guidance: Specialized look module, not a normal exposure fix.
+    common_user_phrases:
+      - make it feel low light
+      - give it a night mood
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - filmicrgb
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Specialized stylistic module.
+  - id: spots
+    display_name: Spot Removal
+    category: repair
+    stage: local_edit
+    purpose: Remove dust spots or very small blemishes.
+    when_to_use:
+      - Sensor dust spots need cleanup.
+      - Small isolated distractions should be removed.
+    avoid_when:
+      - Larger object removal is needed.
+      - A healing workflow is required.
+    primary_controls:
+      - spot patches: small local cleanup areas
+    agent_guidance: Use for small cleanup only; move to retouch for complex repairs.
+    common_user_phrases:
+      - remove dust spots
+      - clean up tiny blemishes
+    prerequisites: []
+    conflicts_or_overlaps:
+      - retouch
+    output_type: corrective
+    confidence_notes: Best for small localized fixes.
+  - id: retouch
+    display_name: Retouch
+    category: repair
+    stage: local_edit
+    purpose: Heal, clone, blur, or reconstruct localized areas for repair.
+    when_to_use:
+      - Objects or blemishes need removal.
+      - Skin cleanup or local reconstruction is needed.
+    avoid_when:
+      - A simple spot removal will do.
+      - Documentary accuracy prohibits content alteration.
+    primary_controls:
+      - healing and cloning tools: local reconstruction and cleanup
+    agent_guidance: Main repair tool for localized edits; keep repairs plausible and targeted.
+    common_user_phrases:
+      - remove that object
+      - retouch the skin
+    prerequisites: []
+    conflicts_or_overlaps:
+      - spots
+      - drawlayer
+    output_type: corrective
+    confidence_notes: Powerful local repair tool.
+  - id: liquify
+    display_name: Liquify
+    category: geometry
+    stage: local_edit
+    purpose: Warp the image locally for reshaping or creative distortion.
+    when_to_use:
+      - Slight shape adjustments are explicitly requested.
+      - Creative local distortion is intended.
+    avoid_when:
+      - Documentary accuracy matters.
+      - A regular rotate or perspective fix is the real need.
+    primary_controls:
+      - warp strokes: local geometry deformation
+    agent_guidance: Use only on explicit request and keep deformations subtle when realism matters.
+    common_user_phrases:
+      - reshape this area
+      - liquify the edges
+    prerequisites: []
+    conflicts_or_overlaps:
+      - ashift
+      - rotatepixels
+    output_type: creative
+    confidence_notes: High risk of unnatural geometry.
+  - id: rawdenoise
+    display_name: Raw Denoise
+    category: denoise
+    stage: input_prep
+    purpose: Reduce noise directly on RAW data before demosaic.
+    when_to_use:
+      - High-ISO RAW noise needs early cleanup.
+      - Chroma noise is strong in RAW files.
+    avoid_when:
+      - The source is not RAW.
+      - Detail preservation matters more than denoise.
+    primary_controls:
+      - raw noise reduction: early mosaic-domain denoise
+    agent_guidance: Early technical denoise that can be cleaner than later RGB denoise, but keep it moderate.
+    common_user_phrases:
+      - denoise the raw file
+      - reduce high iso noise early
+    prerequisites:
+      - rawprepare
+    conflicts_or_overlaps:
+      - denoiseprofile
+      - nlmeans
+    output_type: corrective
+    confidence_notes: RAW-only and easy to stack too heavily with later denoise.
+  - id: borders
+    display_name: Borders
+    category: output
+    stage: output_prep
+    purpose: Add a visible frame or border around the image.
+    when_to_use:
+      - A presentation border is desired.
+      - Print-style framing is requested.
+    avoid_when:
+      - The workflow is purely corrective.
+      - A clean master export is needed.
+    primary_controls:
+      - border size and color: decorative framing
+    agent_guidance: Use only as a finishing presentation step.
+    common_user_phrases:
+      - add a border
+      - frame the image
+    prerequisites:
+      - finalscale
+    conflicts_or_overlaps:
+      - watermark
+      - vignette
+    output_type: creative
+    confidence_notes: Presentation-only output effect.
+  - id: nlmeans
+    display_name: Non-local Means
+    category: denoise
+    stage: local_edit
+    purpose: Apply stronger RGB-domain denoising using non-local means.
+    when_to_use:
+      - Difficult noise needs stronger cleanup.
+      - RGB-domain denoise is acceptable despite slower processing.
+    avoid_when:
+      - RAW denoise or profile denoise can solve it earlier.
+      - Detail retention is critical and noise is moderate.
+    primary_controls:
+      - denoise strength: non-local texture averaging
+    agent_guidance: Useful for tough noise cases, but watch texture loss and runtime cost.
+    common_user_phrases:
+      - strong denoise
+      - remove stubborn noise
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - rawdenoise
+      - denoiseprofile
+    output_type: corrective
+    confidence_notes: Strong but slower denoise option.
+  - id: colorcontrast
+    display_name: Color Contrast
+    category: color
+    stage: color_grading
+    purpose: Increase or rebalance contrast between opposing colors.
+    when_to_use:
+      - Color families need stronger separation.
+      - The user wants more color distinction without just adding saturation.
+    avoid_when:
+      - Saturation alone solves the issue.
+      - Natural color relationships must stay restrained.
+    primary_controls:
+      - opposing-color contrast: color-family separation
+    agent_guidance: Use carefully; it can make colors look unnatural faster than simple saturation changes.
+    common_user_phrases:
+      - separate the colors more
+      - add color contrast
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - vibrance
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Creative color-separation tool.
+  - id: levels
+    display_name: Levels
+    category: tone
+    stage: tone_mapping
+    purpose: Adjust black, mid, and white points using a legacy levels control.
+    when_to_use:
+      - The user thinks in histogram endpoints.
+      - A legacy levels workflow is explicitly requested.
+    avoid_when:
+      - Exposure and filmic RGB already define the tone path.
+      - Multiple curve modules are already in use.
+    primary_controls:
+      - black mid white points: endpoint and midpoint remap
+    agent_guidance: Basic legacy endpoint control; choose one primary endpoint tool rather than stacking several.
+    common_user_phrases:
+      - set black and white points
+      - adjust levels
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - rgblevels
+      - tonecurve
+      - rgbcurve
+    output_type: corrective
+    confidence_notes: Legacy endpoint tool.
+  - id: rgblevels
+    display_name: RGB Levels
+    category: tone
+    stage: tone_mapping
+    purpose: Set black, white, and mid-gray points directly in RGB space.
+    when_to_use:
+      - A quick RGB endpoint remap is enough.
+      - The user wants simple black and white point control.
+    avoid_when:
+      - Filmic RGB is already handling dynamic range gracefully.
+      - More nuanced tonal shaping is needed.
+    primary_controls:
+      - rgb black white grey points: fast endpoint remap
+    agent_guidance: Treat as a utility tool, not the core modern tone-mapping strategy.
+    common_user_phrases:
+      - quick levels adjustment
+      - set the rgb black point
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - levels
+      - filmicrgb
+    output_type: corrective
+    confidence_notes: Faster utility endpoint tool.
+  - id: colorize
+    display_name: Colorize
+    category: effect
+    stage: color_grading
+    purpose: Tint the image or selected regions with a chosen color.
+    when_to_use:
+      - A duotone or stylized tint is wanted.
+      - The user wants a deliberate color wash.
+    avoid_when:
+      - Natural correction is intended.
+      - Other grading tools can achieve the look more subtly.
+    primary_controls:
+      - tint color and amount: applied color wash
+    agent_guidance: Treat as a creative effect rather than corrective grading.
+    common_user_phrases:
+      - add a tint
+      - make it duotone
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - splittoningrgb
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Explicit stylization tool.
+  - id: invert
+    display_name: Invert
+    category: color
+    stage: input_prep
+    purpose: Invert tone and color values for negative conversion or special effects.
+    when_to_use:
+      - Negative workflows require inversion.
+      - A special-effect inversion is explicitly requested.
+    avoid_when:
+      - Normal positive digital editing is intended.
+      - Negadoctor is the correct negative-processing tool.
+    primary_controls:
+      - inversion: positive-to-negative or special-effect inversion
+    agent_guidance: Use only for specialized technical or creative cases.
+    common_user_phrases:
+      - invert the image
+      - make it a negative
+    prerequisites: []
+    conflicts_or_overlaps:
+      - negadoctor
+    output_type: technical
+    confidence_notes: Specialized tool, rarely appropriate in ordinary workflows.
+  - id: vibrance
+    display_name: Vibrance
+    category: color
+    stage: color_grading
+    purpose: Boost muted colors more than already saturated colors.
+    when_to_use:
+      - The image needs a restrained color lift.
+      - A mild saturation increase is desired.
+    avoid_when:
+      - Skin tones are already strong.
+      - Other saturation or color-pop tools are already active.
+    primary_controls:
+      - vibrance amount: selective saturation lift
+    agent_guidance: Safer than raw saturation, but still easy to overdo when stacked with velvia or legacy color boosts.
+    common_user_phrases:
+      - add a little vibrance
+      - boost muted colors
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - velvia
+      - colorbalance
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Overlap-heavy saturation tool.
+  - id: flip
+    display_name: Orientation
+    category: geometry
+    stage: input_prep
+    purpose: Rotate or flip the image to the correct orientation.
+    when_to_use:
+      - The image orientation is wrong.
+      - A coarse flip or 90-degree rotate is needed.
+    avoid_when:
+      - Perspective correction is the real issue.
+      - Only a small horizon adjustment is needed.
+    primary_controls:
+      - orientation: coarse rotate and flip transforms
+    agent_guidance: Technical orientation tool, not an aesthetic transform.
+    common_user_phrases:
+      - rotate it upright
+      - flip the image
+    prerequisites: []
+    conflicts_or_overlaps:
+      - rotatepixels
+    output_type: corrective
+    confidence_notes: Straightforward technical transform.
+  - id: finalscale
+    display_name: Final Resampling
+    category: output
+    stage: output_prep
+    purpose: Resize the fully rendered image for final export.
+    when_to_use:
+      - A specific export size is known.
+      - Output resolution needs control.
+    avoid_when:
+      - No target output size is defined.
+      - Mid-edit preview tuning is still in progress.
+    primary_controls:
+      - output scaling: final export dimensions and sampling
+    agent_guidance: Reserve for the end of the workflow because it is an output-stage utility.
+    common_user_phrases:
+      - resize for export
+      - set final output size
+    prerequisites:
+      - colorout
+    conflicts_or_overlaps:
+      - scalepixels
+      - initialscale
+    output_type: technical
+    confidence_notes: Final output-stage resampling only.
+  - id: globaltonemap
+    display_name: Global Tone Mapping
+    category: tone
+    stage: tone_mapping
+    purpose: Apply a global HDR-style tone compression.
+    when_to_use:
+      - A global HDR-like look is explicitly desired.
+      - The user wants strong compression with a stylized feel.
+    avoid_when:
+      - Natural rendering is the goal.
+      - Filmic RGB already provides the global mapping.
+    primary_controls:
+      - compression strength: flattening of dynamic range
+    agent_guidance: Specialized stylistic tool; use only on explicit request.
+    common_user_phrases:
+      - global hdr look
+      - compress the dynamic range a lot
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - filmicrgb
+      - basecurve
+      - tonemap
+    output_type: creative
+    confidence_notes: Can look synthetic quickly.
+  - id: bilat
+    display_name: Bilateral Filter
+    category: tone
+    stage: local_edit
+    purpose: Manipulate local contrast with an older bilateral-filter workflow.
+    when_to_use:
+      - An older local-contrast workflow is specifically desired.
+      - A detail-preserving smoothing or contrast effect is needed in legacy style.
+    avoid_when:
+      - Diffuse, blur, or toneequal can do the job more cleanly.
+      - Natural rendering is a priority.
+    primary_controls:
+      - bilateral effect strength: local contrast and smoothing balance
+    agent_guidance: Legacy specialized tool; avoid unless a bilateral look is explicitly helpful.
+    common_user_phrases:
+      - old bilateral contrast look
+      - smooth and enhance locally
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - diffuse
+      - atrous
+      - bilateral
+    output_type: creative
+    confidence_notes: Legacy overlap-heavy module.
+  - id: denoiseprofile
+    display_name: Denoise Profiled
+    category: denoise
+    stage: scene_linear
+    purpose: Reduce noise using calibrated camera-profile-aware denoising.
+    when_to_use:
+      - General denoise is needed.
+      - The image comes from a supported camera profile workflow.
+    avoid_when:
+      - Noise is minimal.
+      - Raw denoise or stronger RGB denoise is already handling the issue heavily.
+    primary_controls:
+      - luma and chroma denoise: calibrated noise reduction
+    agent_guidance: Default denoise choice for many images; keep it moderate to preserve texture.
+    common_user_phrases:
+      - reduce noise
+      - clean up iso noise
+    prerequisites:
+      - rawprepare
+    conflicts_or_overlaps:
+      - rawdenoise
+      - nlmeans
+    output_type: corrective
+    confidence_notes: Strong default denoise choice when profile support exists.
+  - id: defringe
+    display_name: Defringe
+    category: repair
+    stage: local_edit
+    purpose: Remove residual color fringes such as purple fringing that survive CA correction.
+    when_to_use:
+      - Purple or magenta fringes remain after lens or CA correction.
+      - High-contrast edges still show non-geometric fringe artifacts.
+    avoid_when:
+      - Regular chromatic aberration is the main problem.
+      - No obvious fringe artifact remains.
+    primary_controls:
+      - fringe suppression: cleanup of residual edge color fringing
+    agent_guidance: Use after lens or CA correction only when fringe artifacts still remain.
+    common_user_phrases:
+      - remove purple fringing
+      - clean up edge fringes
+    prerequisites:
+      - lens
+      - cacorrectrgb
+    conflicts_or_overlaps:
+      - cacorrect
+      - cacorrectrgb
+    output_type: corrective
+    confidence_notes: Residual fringe cleanup, not first-line CA correction.
+  - id: ashift
+    display_name: Rotate And Perspective
+    category: geometry
+    stage: local_edit
+    purpose: Correct converging lines and keystone perspective distortions.
+    when_to_use:
+      - Architecture leans backward.
+      - Vertical or horizontal perspective needs correction.
+    avoid_when:
+      - Only a simple horizon rotation is needed.
+      - Local warping is the actual request.
+    primary_controls:
+      - perspective correction: vertical and horizontal convergence fixes
+    agent_guidance: Use before final crop and keep corrections conservative enough to preserve plausible proportions.
+    common_user_phrases:
+      - fix the perspective
+      - straighten the building
+    prerequisites:
+      - lens
+    conflicts_or_overlaps:
+      - rotatepixels
+      - liquify
+    output_type: corrective
+    confidence_notes: Key geometry tool before reframing.
+  - id: hazeremoval
+    display_name: Haze Removal
+    category: tone
+    stage: local_edit
+    purpose: Cut atmospheric haze and restore distant contrast.
+    when_to_use:
+      - Landscapes or distant scenes look foggy or washed out.
+      - The user wants more clarity through haze.
+    avoid_when:
+      - Portrait skin or gentle low-contrast mood should remain soft.
+      - Halo risk around edges would be unacceptable.
+    primary_controls:
+      - haze removal strength: dehaze and contrast restoration
+    agent_guidance: Strong corrective tool; watch for color shifts, crunchy contrast, and halos.
+    common_user_phrases:
+      - remove haze
+      - dehaze the landscape
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - clahe
+      - local contrast
+      - toneequal
+    output_type: corrective
+    confidence_notes: Powerful but easy to push too far.
+  - id: filmic
+    display_name: Filmic
+    category: tone
+    stage: tone_mapping
+    purpose: Apply the older filmic tone-mapping module.
+    when_to_use:
+      - Reproducing an older edit stack.
+      - Filmic RGB is unavailable or backward compatibility matters.
+    avoid_when:
+      - Filmic RGB is available in a modern workflow.
+      - Another tone-mapping strategy is already active.
+    primary_controls:
+      - dynamic range mapping: older filmic compression
+    agent_guidance: Legacy fallback only; prefer filmicrgb otherwise.
+    common_user_phrases:
+      - use the old filmic workflow
+      - match an older filmic edit
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - filmicrgb
+      - basecurve
+    output_type: corrective
+    confidence_notes: Legacy version superseded by filmicrgb.
+  - id: mask_manager
+    display_name: Mask Manager
+    category: diagnostic
+    stage: diagnostic
+    purpose: Manage reusable masks and support mask coordination across modules.
+    when_to_use:
+      - Mask administration is needed.
+      - Reusing or inspecting masks matters.
+    avoid_when:
+      - The user wants a visible edit result.
+      - A direct aesthetic change is requested.
+    primary_controls:
+      - mask management: support and reuse of masks
+    agent_guidance: Support module only, not an edit to apply for image appearance.
+    common_user_phrases:
+      - manage masks
+      - reuse that mask
+    prerequisites:
+      - drawlayer
+    conflicts_or_overlaps:
+      - detailmask
+    output_type: diagnostic
+    confidence_notes: Administrative mask support rather than image adjustment.
+  - id: lut3d
+    display_name: LUT 3D
+    category: effect
+    stage: color_grading
+    purpose: Apply an external 3D LUT to impose a predefined color look.
+    when_to_use:
+      - A known LUT-based look should be applied.
+      - The user supplies or references a specific LUT grade.
+    avoid_when:
+      - Neutral correction is desired.
+      - No LUT or defined look is available.
+    primary_controls:
+      - lut file and intensity: imported look application
+    agent_guidance: Creative finishing module; do not use as a default correction step.
+    common_user_phrases:
+      - apply this lut
+      - give it a cinematic lut look
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colortransfer
+      - colormapping
+    output_type: creative
+    confidence_notes: Reference-driven look tool.
+  - id: toneequal
+    display_name: Tone Equalizer
+    category: tone
+    stage: local_edit
+    purpose: Rebalance brightness across tonal zones with edge-aware local control.
+    when_to_use:
+      - Shadows need lifting or highlights need taming locally.
+      - The user wants dodge-and-burn style tonal shaping.
+    avoid_when:
+      - Only a simple global exposure change is wanted.
+      - Heavy legacy shadow/highlight workflows are being matched instead.
+    primary_controls:
+      - tonal zone adjustments: local brightness equalization by tone range
+    agent_guidance: Preferred modern local tone tool; pair naturally with exposure and filmicrgb.
+    common_user_phrases:
+      - lift the shadows without flattening
+      - dodge and burn the tones
+    prerequisites:
+      - exposure
+      - filmicrgb
+    conflicts_or_overlaps:
+      - shadhi
+      - relight
+    output_type: corrective
+    confidence_notes: Modern local tone-shaping workhorse.
+  - id: filmicrgb
+    display_name: Filmic RGB
+    category: tone
+    stage: tone_mapping
+    purpose: Compress scene-referred dynamic range into display-referred output while preserving tonal relationships.
+    when_to_use:
+      - A RAW scene needs display mapping.
+      - The image feels flat or too wide-range for display.
+    avoid_when:
+      - A legacy base-curve workflow is intentionally being preserved.
+      - Another global tone-mapping strategy is already in charge.
+    primary_controls:
+      - scene-to-display mapping: global dynamic range compression
+    agent_guidance: Preferred modern tone-mapping operator; pair with exposure and toneequal, and avoid stacking with legacy tone mappers.
+    common_user_phrases:
+      - map it naturally for display
+      - compress the dynamic range
+    prerequisites:
+      - exposure
+      - colorin
+    conflicts_or_overlaps:
+      - filmic
+      - basecurve
+      - tonecurve
+      - globaltonemap
+    output_type: corrective
+    confidence_notes: Core modern scene-referred tone mapper.
+  - id: negadoctor
+    display_name: Negadoctor
+    category: input
+    stage: input_prep
+    purpose: Convert scanned or photographed color negatives into positive images.
+    when_to_use:
+      - The source is a film negative scan or camera capture of a negative.
+      - Negative inversion with film controls is required.
+    avoid_when:
+      - The source is a normal positive digital image.
+      - A simple invert is the only intended effect.
+    primary_controls:
+      - negative inversion and film-base controls: positive conversion for negatives
+    agent_guidance: Specialized negative-processing module; do not use in standard digital-positive workflows.
+    common_user_phrases:
+      - invert this color negative
+      - process this film scan
+    prerequisites:
+      - invert
+    conflicts_or_overlaps:
+      - invert
+    output_type: technical
+    confidence_notes: Specialized film-negative workflow tool.
+  - id: channelmixerrgb
+    display_name: Channel Mixer RGB
+    category: color
+    stage: color_grading
+    purpose: Mix RGB channels for monochrome conversion, channel response shaping, or creative color science.
+    when_to_use:
+      - A nuanced black-and-white conversion is needed.
+      - Channel relationships need deliberate reinterpretation.
+    avoid_when:
+      - A simple saturation or hue tweak is enough.
+      - Legacy channelmixer compatibility is required instead.
+    primary_controls:
+      - rgb channel mixing: output response from source channels
+    agent_guidance: Preferred modern channel mixer, especially for monochrome and color reinterpretation.
+    common_user_phrases:
+      - mix the channels for black and white
+      - rebalance the color channels
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - channelmixer
+      - monochrome
+    output_type: creative
+    confidence_notes: Powerful and versatile modern mixer.
+  - id: censorize
+    display_name: Censorize
+    category: repair
+    stage: output_prep
+    purpose: Obscure private or sensitive content intentionally.
+    when_to_use:
+      - Faces, screens, or identifying details must be hidden.
+      - A privacy-preserving blur or obscuration is needed.
+    avoid_when:
+      - Restoration or cleanup is the goal.
+      - The content should remain visible.
+    primary_controls:
+      - obscuration amount: blur and hide sensitive regions
+    agent_guidance: Privacy utility only; do not mistake it for a repair or beautification tool.
+    common_user_phrases:
+      - blur out that face
+      - hide the private information
+    prerequisites:
+      - drawlayer
+    conflicts_or_overlaps:
+      - retouch
+    output_type: technical
+    confidence_notes: Safety and privacy utility.
+  - id: splittoningrgb
+    display_name: Split-toning RGB
+    category: effect
+    stage: color_grading
+    purpose: Apply modern RGB split toning between tonal regions.
+    when_to_use:
+      - The user wants cool shadows and warm highlights.
+      - A stylized tonal color separation is desired.
+    avoid_when:
+      - Neutral correction is the goal.
+      - Color balance RGB can solve the look more flexibly.
+    primary_controls:
+      - shadow and highlight color transform: tonal color separation
+    agent_guidance: Creative grading module; use when the look explicitly calls for tonal color separation.
+    common_user_phrases:
+      - cool the shadows and warm the highlights
+      - add split toning
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - splittoning
+      - colorbalancergb
+    output_type: creative
+    confidence_notes: Modern split-toning choice.
+  - id: colorprimaries
+    display_name: Color Primaries
+    category: color
+    stage: color_grading
+    purpose: Adjust RGB and CMY anchor colors to reshape the image colorimetry and gamut behavior.
+    when_to_use:
+      - Advanced color-science tuning is desired.
+      - Primary and secondary color families need direct remapping.
+    avoid_when:
+      - The user only wants simple grading.
+      - White balance or color balance RGB already solve the request.
+    primary_controls:
+      - primary hues and purity: anchor-color remapping
+    agent_guidance: Advanced tool; use only with explicit color intent, not for routine quick grading.
+    common_user_phrases:
+      - shift the primaries
+      - tune the red and blue anchors
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colorbalancergb
+      - colorequal
+    output_type: creative
+    confidence_notes: Advanced and easy to misuse without clear intent.
+  - id: colorbalancergb
+    display_name: Color Balance RGB
+    category: color
+    stage: color_grading
+    purpose: Apply modern scene-referred color grading across shadows, midtones, and highlights.
+    when_to_use:
+      - The user wants cinematic grading or broad color harmonization.
+      - Tonal-range-specific color shaping is needed.
+    avoid_when:
+      - White balance is still the real technical correction.
+      - A narrower selective color tool would solve the request more directly.
+    primary_controls:
+      - lift gamma gain and chroma: tonal-range color grading
+    agent_guidance: Preferred modern grading module for broad mood and contrast shaping.
+    common_user_phrases:
+      - make it cinematic
+      - warm the shadows and cool the highlights
+    prerequisites:
+      - colorin
+      - filmicrgb
+    conflicts_or_overlaps:
+      - colorbalance
+      - splittoningrgb
+      - vibrance
+    output_type: creative
+    confidence_notes: Strong modern grading module with broad reach.
+  - id: colorequal
+    display_name: Color Equalizer
+    category: color
+    stage: color_grading
+    purpose: Target color attributes precisely across perceptual ranges.
+    when_to_use:
+      - Fine targeted color shaping is needed.
+      - The user wants selective hue or saturation refinement without broad shifts.
+    avoid_when:
+      - White balance or broad grading is enough.
+      - The request is too vague for a targeted color tool.
+    primary_controls:
+      - targeted color bands: selective hue, chroma, and lightness control
+    agent_guidance: Modern targeted color refinement tool; use when the request names specific colors or ranges.
+    common_user_phrases:
+      - calm the blues only
+      - target the orange saturation
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - colorzones
+      - colorbalancergb
+    output_type: corrective
+    confidence_notes: Strong targeted color shaper.
+  - id: drawlayer
+    display_name: Draw Layer
+    category: mask
+    stage: local_edit
+    purpose: Paint manual strokes and raster local-edit layers.
+    when_to_use:
+      - A manual painted mask or brush edit is needed.
+      - A local paint layer is the best support for a correction.
+    avoid_when:
+      - Parametric or simpler masks are enough.
+      - The job is simple spot cleanup.
+    primary_controls:
+      - painted layers and strokes: manual local edit authoring
+    agent_guidance: Use as mask-authoring or paint support, not as the first choice for every local edit.
+    common_user_phrases:
+      - paint in the adjustment
+      - brush this area
+    prerequisites: []
+    conflicts_or_overlaps:
+      - mask_manager
+      - retouch
+    output_type: technical
+    confidence_notes: Support layer system rather than a single-purpose correction.
+  - id: cacorrectrgb
+    display_name: Chromatic Aberrations RGB
+    category: repair
+    stage: scene_linear
+    purpose: Correct lateral chromatic aberration in the modern RGB workflow.
+    when_to_use:
+      - Purple or green edge separation appears toward the frame edges.
+      - The image needs modern RGB-domain CA correction.
+    avoid_when:
+      - Fringing is actually bloom, highlight bleeding, or demosaic artifact.
+      - Lens correction already resolved the issue.
+    primary_controls:
+      - rgb CA correction: reduce lateral edge color separation
+    agent_guidance: Prefer this over legacy cacorrect in modern workflows.
+    common_user_phrases:
+      - fix purple and green edges
+      - correct chromatic aberration in rgb
+    prerequisites:
+      - lens
+    conflicts_or_overlaps:
+      - cacorrect
+      - defringe
+    output_type: corrective
+    confidence_notes: Preferred modern CA correction path.
+  - id: diffuse
+    display_name: Diffuse Or Sharpen
+    category: tone
+    stage: local_edit
+    purpose: Shape detail, diffusion, sharpening, or local contrast with a modern physically inspired framework.
+    when_to_use:
+      - Advanced sharpening or deblurring is needed.
+      - Texture, bloom reduction, or local diffusion control is requested.
+    avoid_when:
+      - A simple sharpen is sufficient.
+      - The user only wants basic output crispness.
+    primary_controls:
+      - diffusion and sharpening presets: advanced multiscale detail shaping
+    agent_guidance: Preferred advanced detail tool, but easy to overuse; start conservatively and avoid stacking heavy sharpeners.
+    common_user_phrases:
+      - recover detail cleanly
+      - sharpen with more control
+    prerequisites:
+      - denoiseprofile
+    conflicts_or_overlaps:
+      - sharpen
+      - highpass
+      - equalizer
+    output_type: corrective
+    confidence_notes: Powerful modern detail framework with high leverage.
+  - id: blurs
+    display_name: Blurs
+    category: effect
+    stage: local_edit
+    purpose: Apply controlled blur models for diffusion, smoothing, or synthetic lens effects.
+    when_to_use:
+      - Deliberate blur or synthetic softness is desired.
+      - Motion, lens, or diffusion blur is part of the look.
+    avoid_when:
+      - The goal is detail recovery or sharpening.
+      - Corrective denoise would be more appropriate.
+    primary_controls:
+      - blur model and radius: controlled image softening
+    agent_guidance: Utility and creative blur module, not a corrective detail tool.
+    common_user_phrases:
+      - blur this deliberately
+      - add lens-like softness
+    prerequisites:
+      - exposure
+    conflicts_or_overlaps:
+      - lowpass
+      - soften
+    output_type: creative
+    confidence_notes: Creative blur family rather than correction.
+  - id: initialscale
+    display_name: Initial Scale
+    category: output
+    stage: input_prep
+    purpose: Apply early-stage scaling as a technical pipeline setup step.
+    when_to_use:
+      - Pipeline logic requires an early scale adjustment.
+      - A specialized technical workflow needs it.
+    avoid_when:
+      - The user is doing ordinary editing.
+      - Finalscale can handle the export size instead.
+    primary_controls:
+      - initial scaling: technical pipeline setup
+    agent_guidance: Usually not agent-selected in normal editing tasks.
+    common_user_phrases:
+      - technical initial scaling
+      - early resample setup
+    prerequisites: []
+    conflicts_or_overlaps:
+      - finalscale
+      - scalepixels
+    output_type: technical
+    confidence_notes: Mostly internal pipeline utility.
+  - id: watermark
+    display_name: Watermark
+    category: output
+    stage: output_prep
+    purpose: Overlay a watermark for branding, authorship, or proofing.
+    when_to_use:
+      - Branding or proof watermarking is requested.
+      - A marked review copy is needed.
+    avoid_when:
+      - A clean master export is required.
+      - The user wants image correction only.
+    primary_controls:
+      - watermark asset and placement: branded output overlay
+    agent_guidance: Apply only at the final output stage.
+    common_user_phrases:
+      - add my watermark
+      - put a logo on the export
+    prerequisites:
+      - finalscale
+      - colorout
+    conflicts_or_overlaps:
+      - borders
+    output_type: creative
+    confidence_notes: Presentation and export-only module.
+  - id: lens
+    display_name: Lens Correction
+    category: geometry
+    stage: input_prep
+    purpose: Correct lens distortion, vignetting, and related optical defects using lens profiles.
+    when_to_use:
+      - Wide-angle distortion or edge darkening is visible.
+      - Lens metadata is present and optical correction is desired.
+    avoid_when:
+      - Intentional lens distortion is part of the style.
+      - The shot should retain native optical character.
+    primary_controls:
+      - distortion vignetting and CA correction: lens-profile-based optical fixes
+    agent_guidance: Early corrective step for most lens-based issues and usually comes before residual CA cleanup.
+    common_user_phrases:
+      - fix lens distortion
+      - correct the lens vignetting
+    prerequisites:
+      - colorin
+    conflicts_or_overlaps:
+      - cacorrectrgb
+      - vignette
+    output_type: corrective
+    confidence_notes: Strong early corrective tool when profile support exists.

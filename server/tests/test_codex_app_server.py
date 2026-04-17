@@ -20,6 +20,10 @@ from server.codex_app_server import (
 )
 from server.codex_bridge.canonical_binder import bind_canonical_plan
 from server.codex_bridge.intent_router import list_playbooks, load_playbook
+from server.codex_bridge.module_cards import (
+    load_module_cards,
+    load_module_selection_rules,
+)
 from shared.protocol import AgentPlan, RequestEnvelope
 
 try:
@@ -1067,6 +1071,17 @@ def test_load_playbook_rejects_unknown_ids() -> None:
         load_playbook("playbooks/style/unknown.txt")
 
 
+def test_module_card_registry_loads_expected_modules_and_rules() -> None:
+    cards = load_module_cards()
+    rules = load_module_selection_rules()
+
+    assert cards["exposure"]["display_name"] == "Exposure"
+    assert cards["filmicrgb"]["output_type"] == "corrective"
+    assert cards["colorprimaries"]["category"] == "color"
+    assert "filmicrgb" in rules["preferred_scene_referred_path"]
+    assert "clipping" in rules["diagnostic_modules"]
+
+
 def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() -> None:
     bridge = CodexAppServerBridge(
         command=["codex", "app-server", "--listen", "stdio://"]
@@ -1127,6 +1142,13 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "Stay inside the Ansel tool loop" in prompt
     assert "the next substantive step should usually be apply_operations" in prompt
     assert "the next non-final action should usually be apply_operations" in prompt
+    assert "Module selection policy:" in prompt
+    assert "Prefer modern scene-referred path" in prompt
+    assert "Diagnostic modules are analysis only, not edits" in prompt
+    assert "Relevant module cards:" in prompt
+    assert "exposure / Exposure [tone, scene_linear, corrective]" in prompt
+    assert "colorequal / Color Equalizer [color, color_grading, corrective]" in prompt
+    assert "colorprimaries / Color Primaries [color, color_grading, creative]" in prompt
 
 
 def test_turn_prompt_is_always_live_run_focused() -> None:

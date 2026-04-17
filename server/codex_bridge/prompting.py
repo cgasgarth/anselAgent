@@ -14,6 +14,7 @@ from .edit_graph import build_edit_graph
 from .errors import CodexAppServerError
 from .image_signals import build_image_analysis_signals
 from .intent_router import playbook_catalog_payload
+from .module_cards import render_module_policy_summary, render_relevant_module_cards
 from .models import TurnContext
 from .prompt_templates import render_prompt_template
 
@@ -470,6 +471,9 @@ class PromptingMixin:
         else:
             mode_block = "Single-turn mode: do not call apply_operations; return operations directly in final JSON.\n"
 
+        module_policy_summary = render_module_policy_summary()
+        module_cards_summary = render_relevant_module_cards(request)
+
         return render_prompt_template(
             "turn_prompt.j2",
             goal_text=request.refinement.goalText,
@@ -485,6 +489,8 @@ class PromptingMixin:
             playbooks=playbook_catalog_payload(),
             live_run_enabled=live_run_enabled,
             apply_budget_window=_DEFAULT_MAX_TOOL_CALLS_WITHOUT_APPLY + 2,
+            module_policy_summary=module_policy_summary,
+            module_cards_summary=module_cards_summary,
         )
 
     @staticmethod

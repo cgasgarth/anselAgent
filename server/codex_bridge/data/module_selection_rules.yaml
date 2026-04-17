@@ -1,0 +1,116 @@
+version: 1
+preferred_scene_referred_path:
+  - rawprepare
+  - demosaic
+  - temperature
+  - exposure
+  - colorin
+  - highlights
+  - lens
+  - diffuse
+  - colorbalancergb
+  - channelmixerrgb
+  - colorprimaries
+  - colorequal
+  - toneequal
+  - filmicrgb
+  - colorout
+legacy_or_overlap_heavy:
+  - basecurve
+  - tonecurve
+  - rgbcurve
+  - levels
+  - zonesystem
+  - colisa
+  - colorcorrection
+  - vibrance
+  - velvia
+  - splittoning
+  - globaltonemap
+  - bilat
+  - atrous
+  - shadhi
+  - filmic
+diagnostic_modules:
+  - clipping
+  - overexposed
+  - rawoverexposed
+  - mask_manager
+modern_preferences:
+  - prefer: filmicrgb
+    over:
+      - filmic
+      - basecurve
+      - tonecurve
+      - globaltonemap
+    rationale: Prefer the modern scene-referred tone-mapping path.
+  - prefer: colorbalancergb
+    over:
+      - colorbalance
+    rationale: Prefer the modern RGB grading module.
+  - prefer: channelmixerrgb
+    over:
+      - channelmixer
+    rationale: Prefer the modern RGB channel mixer.
+  - prefer: cacorrectrgb
+    over:
+      - cacorrect
+    rationale: Prefer RGB-domain chromatic-aberration correction in modern workflows.
+  - prefer: toneequal
+    over:
+      - shadhi
+    rationale: Prefer edge-aware local tone shaping over the older shadows-highlights module.
+  - prefer: diffuse
+    over:
+      - sharpen
+      - atrous
+      - bilat
+    rationale: Prefer the modern detail-shaping framework when the user wants advanced detail control.
+avoid_redundant_stacking:
+  - modules:
+      - basecurve
+      - filmicrgb
+    reason: usually redundant or conflicting tone-mapping strategies
+  - modules:
+      - tonecurve
+      - rgbcurve
+      - levels
+    reason: choose one primary curve or endpoint strategy instead of stacking several
+  - modules:
+      - sharpen
+      - diffuse
+    reason: aggressive sharpening stacks can look brittle quickly
+  - modules:
+      - rawdenoise
+      - denoiseprofile
+      - nlmeans
+    reason: heavy multi-stage denoise can erase detail and texture
+  - modules:
+      - vibrance
+      - velvia
+      - colorbalance
+    reason: combined saturation boosts oversaturate quickly
+stage_order:
+  - input_prep
+  - scene_linear
+  - tone_mapping
+  - color_grading
+  - local_edit
+  - output_prep
+  - diagnostic
+global_prompt: |
+  You are selecting among Ansel image-operation modules.
+
+  Prefer technically corrective modules before creative effects.
+  Prefer modern scene-referred modules over legacy alternatives unless:
+  1) the user explicitly requests a legacy look,
+  2) you are reproducing an old edit history,
+  3) the newer module does not address the requested behavior.
+
+  Do not stack overlapping tone-mapping modules.
+  Do not use diagnostic modules as edits.
+  When multiple modules could work, choose the narrowest module that directly matches the user's intent.
+  Explain your choice in terms of: problem solved, likely side effects, and fallback module.
+module_aliases:
+  - alias: primaries
+    canonical: colorprimaries
