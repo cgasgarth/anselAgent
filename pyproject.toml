@@ -14,6 +14,7 @@ dependencies = [
   "jinja2>=3.1,<4.0",
   "pillow>=10.4,<12.0",
   "pydantic>=2.8,<3.0",
+  "pyyaml>=6.0,<7.0",
   "uvicorn>=0.30,<1.0",
 ]
 
@@ -32,7 +33,7 @@ testpaths = ["server/tests"]
 include = ["server*", "shared*"]
 
 [tool.setuptools.package-data]
-server = ["codex_bridge/prompts/**/*.txt", "codex_bridge/prompts/**/*.j2"]
+server = ["codex_bridge/prompts/**/*.txt", "codex_bridge/prompts/**/*.j2", "codex_bridge/data/**/*.yaml"]
 
 [tool.ty.src]
 include = ["server", "shared"]

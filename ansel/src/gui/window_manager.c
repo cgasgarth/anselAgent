@@ -635,6 +635,11 @@ void dt_ui_titlebar_pack_end(dt_ui_t *ui, GtkWidget *widget)
 #endif
 }
 
+GtkWidget *dt_ui_get_menu_bar(dt_ui_t *ui)
+{
+  return (ui && ui->header) ? ui->header->menu_bar : NULL;
+}
+
 void _home_callback()
 {
   dt_ctl_switch_mode_to("lighttable");

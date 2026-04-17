@@ -135,6 +135,7 @@ void dt_ui_restore_panels(dt_ui_t *ui);
 void dt_ui_init_titlebar(dt_ui_t *ui);
 void dt_ui_cleanup_titlebar(dt_ui_t *ui);
 void dt_ui_init_global_menu(dt_ui_t *ui);
+GtkWidget *dt_ui_get_menu_bar(dt_ui_t *ui);
 void dt_ui_set_window_buttons_visible(dt_ui_t *ui, gboolean visible);
 
 void dt_hinter_set_message(dt_ui_t *ui, const char *message);

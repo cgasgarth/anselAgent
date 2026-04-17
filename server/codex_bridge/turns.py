@@ -9,6 +9,7 @@ from shared.protocol import AgentPlan, JsonObject, RequestEnvelope
 
 from .config import (
     _DEFAULT_APPROVAL_POLICY,
+    _DEFAULT_INITIAL_TURN_IDLE_SECONDS,
     _DEFAULT_MAX_IDLE_SECONDS,
     _DEFAULT_MODEL,
     _DEFAULT_PERSONALITY,
@@ -26,6 +27,12 @@ from .request_state import build_output_schema
 
 
 class TurnsMixin:
+    @staticmethod
+    def _idle_timeout_seconds_for_method(last_activity_method: str | None) -> float:
+        if last_activity_method == "turn/start":
+            return max(_DEFAULT_MAX_IDLE_SECONDS, _DEFAULT_INITIAL_TURN_IDLE_SECONDS)
+        return _DEFAULT_MAX_IDLE_SECONDS
+
     @staticmethod
     def _model_for_request(request: RequestEnvelope) -> str | None:
         if request.fast and _FAST_MODE_MODEL:
@@ -176,9 +183,12 @@ class TurnsMixin:
             while not state["completed"]:
                 self._raise_if_cancelled_locked(active_request)
                 max_wait_seconds = 0.5
-                if _DEFAULT_MAX_IDLE_SECONDS > 0:
+                idle_timeout_seconds = self._idle_timeout_seconds_for_method(
+                    state.get("last_activity_method")
+                )
+                if idle_timeout_seconds > 0:
                     idle_seconds = time.monotonic() - state["last_activity_at"]
-                    if idle_seconds >= _DEFAULT_MAX_IDLE_SECONDS:
+                    if idle_seconds >= idle_timeout_seconds:
                         raise CodexAppServerError(
                             "codex_stalled",
                             (
@@ -189,7 +199,7 @@ class TurnsMixin:
                             status_code=504,
                         )
                     max_wait_seconds = min(
-                        max_wait_seconds, _DEFAULT_MAX_IDLE_SECONDS - idle_seconds
+                        max_wait_seconds, idle_timeout_seconds - idle_seconds
                     )
 
                 message = self._read_message_locked(

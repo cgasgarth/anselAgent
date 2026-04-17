@@ -33,3 +33,16 @@ def test_chat_window_has_minimum_size_and_bottom_input_row() -> None:
         "g_idle_add(_agent_chat_window_reflow_idle, dev->agent_chat.floating_window);"
         in source
     )
+    assert "static gboolean _agent_chat_focus_input_idle(gpointer user_data);" in source
+    assert "gtk_window_set_focus(GTK_WINDOW(dev->agent_chat.floating_window), dev->agent_chat.input_entry);" in source
+    assert "gtk_editable_set_position(GTK_EDITABLE(dev->agent_chat.input_entry), -1);" in source
+    assert "g_idle_add(_agent_chat_focus_input_idle, dev);" in source
+
+
+def test_chat_progress_ignores_not_found_status_updates() -> None:
+    source = DARKROOM_C.read_text()
+
+    assert "if(progress->status && progress->status[0] != '\\0')" in source
+    assert "if(progress->found)" in source
+    assert "_agent_chat_set_status(dev, progress->status);" in source
+    assert "_agent_chat_set_status(dev, progress->message);" in source

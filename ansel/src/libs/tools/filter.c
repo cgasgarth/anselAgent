@@ -441,7 +441,39 @@ static void _culling_mode(GtkWidget *widget, gpointer data)
 
 static void _refresh_collection_callback(GtkButton *button, gpointer user_data)
 {
+  (void)button;
+  (void)user_data;
   dt_collection_update_query(darktable.collection, DT_COLLECTION_CHANGE_RELOAD, DT_COLLECTION_PROP_UNDEF, NULL);
+}
+
+static gboolean _refresh_collection_action(GtkAccelGroup *accel_group, GObject *accelerable,
+                                           guint keyval, GdkModifierType modifier, gpointer data)
+{
+  (void)accel_group;
+  (void)accelerable;
+  (void)keyval;
+  (void)modifier;
+  (void)data;
+  _refresh_collection_callback(NULL, NULL);
+  return TRUE;
+}
+
+static gboolean _toggle_culling_mode_action(GtkAccelGroup *accel_group, GObject *accelerable,
+                                            guint keyval, GdkModifierType modifier, gpointer data)
+{
+  (void)accel_group;
+  (void)accelerable;
+  (void)keyval;
+  (void)modifier;
+
+  dt_lib_module_t *self = (dt_lib_module_t *)data;
+  if(!self || !self->data)
+    return TRUE;
+
+  dt_lib_tool_filter_t *d = (dt_lib_tool_filter_t *)self->data;
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->culling),
+                               !gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(d->culling)));
+  return TRUE;
 }
 
 void _widget_align_left(GtkWidget *widget)
@@ -533,6 +565,7 @@ static gboolean _rating_clicked(GtkWidget *w, GdkEventButton *e, dt_lib_module_t
 
 static void _select_all_callback(GtkWidget *widget, dt_lib_module_t *self)
 {
+  (void)widget;
   dt_collection_set_filter_flags(darktable.collection, ~COLLECTION_FILTER_NONE);
   _update_rating_filter(self);
   _update_colors_filter(self);
@@ -542,11 +575,34 @@ static void _select_all_callback(GtkWidget *widget, dt_lib_module_t *self)
 
 static void _select_none_callback(GtkWidget *widget, dt_lib_module_t *self)
 {
+  (void)widget;
   dt_collection_set_filter_flags(darktable.collection, COLLECTION_FILTER_NONE);
   _update_rating_filter(self);
   _update_colors_filter(self);
   _update_altered_filters(self);
   _lib_filter_update_query(self, DT_COLLECTION_PROP_UNDEF);
+}
+
+static gboolean _select_all_filters_action(GtkAccelGroup *accel_group, GObject *accelerable,
+                                           guint keyval, GdkModifierType modifier, gpointer data)
+{
+  (void)accel_group;
+  (void)accelerable;
+  (void)keyval;
+  (void)modifier;
+  _select_all_callback(NULL, (dt_lib_module_t *)data);
+  return TRUE;
+}
+
+static gboolean _select_none_filters_action(GtkAccelGroup *accel_group, GObject *accelerable,
+                                            guint keyval, GdkModifierType modifier, gpointer data)
+{
+  (void)accel_group;
+  (void)accelerable;
+  (void)keyval;
+  (void)modifier;
+  _select_none_callback(NULL, (dt_lib_module_t *)data);
+  return TRUE;
 }
 
 
@@ -578,11 +634,9 @@ void gui_init(dt_lib_module_t *self)
   gtk_widget_set_name(d->refresh, "quick-filter-reload");
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(d->refresh), FALSE, FALSE, 0);
 
-  gchar *path = dt_accels_build_path(_("Lighttable/Actions"), _("Reload current collection"));
-  dt_accels_new_widget_shortcut(darktable.gui->accels, d->refresh, "activate",
-                                darktable.gui->accels->lighttable_accels, path, GDK_KEY_r, GDK_CONTROL_MASK,
-                                FALSE);
-  dt_free(path);
+  dt_accels_new_lighttable_action(_refresh_collection_action, self, N_("Lighttable/Actions"),
+                                  N_("Reload current collection"), GDK_KEY_r, GDK_CONTROL_MASK,
+                                  _("Triggers the action"));
 
   // dumb empty flexible spacer at the end
   GtkWidget *spacer = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -673,11 +727,9 @@ void gui_init(dt_lib_module_t *self)
   gtk_box_pack_start(GTK_BOX(self->widget), GTK_WIDGET(d->culling), FALSE, FALSE, 0);
   gtk_widget_set_name(d->culling, "quickfilter-culling");
 
-  path = dt_accels_build_path(_("Lighttable/Actions"), _("Toggle culling mode"));
-  dt_accels_new_widget_shortcut(darktable.gui->accels, d->culling, "activate",
-                                darktable.gui->accels->lighttable_accels, path, GDK_KEY_s, GDK_CONTROL_MASK,
-                                FALSE);
-  dt_free(path);
+  dt_accels_new_lighttable_action(_toggle_culling_mode_action, self, N_("Lighttable/Actions"),
+                                  N_("Toggle culling mode"), GDK_KEY_s, GDK_CONTROL_MASK,
+                                  _("Triggers the action"));
 
   // dumb empty flexible spacer at the end
   spacer = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
@@ -760,20 +812,14 @@ void gui_init(dt_lib_module_t *self)
   GtkWidget *first_entry = gtk_menu_item_new_with_label(_("Select all filters"));
   gtk_menu_shell_append(GTK_MENU_SHELL(d->menu), first_entry);
   g_signal_connect(G_OBJECT(first_entry), "activate", G_CALLBACK(_select_all_callback), self);
-  path = dt_accels_build_path(_("Lighttable/Actions"), _("Select all filters"));
-  dt_accels_new_widget_shortcut(darktable.gui->accels, first_entry, "activate",
-                                darktable.gui->accels->lighttable_accels, path, 0, 0,
-                                FALSE);
-  dt_free(path);
+  dt_accels_new_lighttable_action(_select_all_filters_action, self, N_("Lighttable/Actions"),
+                                  N_("Select all filters"), 0, 0, _("Triggers the action"));
 
   GtkWidget *second_entry = gtk_menu_item_new_with_label(_("Deselect all filters"));
   gtk_menu_shell_append(GTK_MENU_SHELL(d->menu), second_entry);
   g_signal_connect(G_OBJECT(second_entry), "activate", G_CALLBACK(_select_none_callback), self);
-  path = dt_accels_build_path(_("Lighttable/Actions"), _("Deselect all filters"));
-  dt_accels_new_widget_shortcut(darktable.gui->accels, second_entry, "activate",
-                                darktable.gui->accels->lighttable_accels, path, 0, 0,
-                                FALSE);
-  dt_free(path);
+  dt_accels_new_lighttable_action(_select_none_filters_action, self, N_("Lighttable/Actions"),
+                                  N_("Deselect all filters"), 0, 0, _("Triggers the action"));
 
   gtk_widget_show_all(d->menu);
 }

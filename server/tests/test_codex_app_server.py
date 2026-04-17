@@ -20,6 +20,10 @@ from server.codex_app_server import (
 )
 from server.codex_bridge.canonical_binder import bind_canonical_plan
 from server.codex_bridge.intent_router import list_playbooks, load_playbook
+from server.codex_bridge.module_cards import (
+    load_module_cards,
+    load_module_selection_rules,
+)
 from shared.protocol import AgentPlan, RequestEnvelope
 
 try:
@@ -1067,6 +1071,17 @@ def test_load_playbook_rejects_unknown_ids() -> None:
         load_playbook("playbooks/style/unknown.txt")
 
 
+def test_module_card_registry_loads_expected_modules_and_rules() -> None:
+    cards = load_module_cards()
+    rules = load_module_selection_rules()
+
+    assert cards["exposure"]["display_name"] == "Exposure"
+    assert cards["filmicrgb"]["output_type"] == "corrective"
+    assert cards["colorprimaries"]["category"] == "color"
+    assert "filmicrgb" in rules["preferred_scene_referred_path"]
+    assert "clipping" in rules["diagnostic_modules"]
+
+
 def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() -> None:
     bridge = CodexAppServerBridge(
         command=["codex", "app-server", "--listen", "stdio://"]
@@ -1127,6 +1142,13 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "Stay inside the Ansel tool loop" in prompt
     assert "the next substantive step should usually be apply_operations" in prompt
     assert "the next non-final action should usually be apply_operations" in prompt
+    assert "Module selection policy:" in prompt
+    assert "Prefer modern scene-referred path" in prompt
+    assert "Diagnostic modules are analysis only, not edits" in prompt
+    assert "Relevant module cards:" in prompt
+    assert "exposure / Exposure [tone, scene_linear, corrective]" in prompt
+    assert "colorequal / Color Equalizer [color, color_grading, corrective]" in prompt
+    assert "colorprimaries / Color Primaries [color, color_grading, creative]" in prompt
 
 
 def test_turn_prompt_is_always_live_run_focused() -> None:
@@ -3231,3 +3253,95 @@ def test_token_usage_notification_ignores_other_turns() -> None:
 
     assert turn_state["token_usage_last"] is None
     assert turn_state["token_usage_total"] is None
+
+
+def test_turn_start_idle_timeout_is_more_lenient_than_mid_turn_timeout() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+
+    assert (
+        bridge._idle_timeout_seconds_for_method("turn/start")  # type: ignore[attr-defined]
+        > bridge._idle_timeout_seconds_for_method("thread/item/updated")  # type: ignore[attr-defined]
+    )
+
+
+def test_run_turn_allows_long_initial_silence_before_declaring_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    active_request = bridge._register_request(request)  # type: ignore[attr-defined]
+    plan_json = AgentPlan.model_validate(
+        {
+            "assistantText": "Apply a gentle exposure lift.",
+            "continueRefining": False,
+            "operations": [],
+            "canonicalActions": [],
+        }
+    ).model_dump_json()
+
+    monotonic_values = iter([0.0, 0.0, 130.0, 130.0, 130.5, 131.0, 131.0, 131.0])
+    read_messages = iter(
+        [
+            None,
+            {
+                "method": "thread/item/completed",
+                "params": {"threadId": "thread-1", "turnId": "turn-1"},
+            },
+        ]
+    )
+
+    monkeypatch.setattr(
+        "server.codex_bridge.turns.time.monotonic", lambda: next(monotonic_values)
+    )
+    monkeypatch.setattr(
+        bridge, "_preview_data_url", lambda request: "data:image/jpeg;base64,ZmFrZQ=="
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_build_turn_input",
+        lambda request, preview_data_url: [{"type": "text", "text": "hello"}],
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_send_request_locked",
+        lambda method, params, deadline, active_request: {
+            "result": {"turn": {"id": "turn-1"}}
+        },
+    )
+    monkeypatch.setattr(
+        bridge, "_register_turn_context", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge, "_set_active_request_token_usage_locked", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        bridge,
+        "_read_message_locked",
+        lambda deadline, active_request, max_wait_seconds=None: next(read_messages),
+    )
+
+    def _complete_turn(message, state):  # type: ignore[no-untyped-def]
+        state["completed"] = True
+        state["final_message"] = plan_json
+
+    monkeypatch.setattr(bridge, "_handle_message_locked", _complete_turn)
+
+    try:
+        result = bridge._run_turn_locked(  # type: ignore[attr-defined]
+            "thread-1",
+            request,
+            _DEFAULT_MODEL,
+            _DEFAULT_REASONING_EFFORT,
+            deadline=999.0,
+            active_request=active_request,
+            thread_reused=False,
+        )
+    finally:
+        bridge._unregister_request(request.requestId)  # type: ignore[attr-defined]
+
+    assert result.turn_id == "turn-1"
+    assert result.plan.assistantText == "Apply a gentle exposure lift."

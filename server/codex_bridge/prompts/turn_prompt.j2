@@ -10,6 +10,11 @@ Image: {{ image_name }} ({{ width }}x{{ height }})
 Available playbooks:
 {% for playbook in playbooks %}- {{ playbook.id }} ({{ playbook.category }}): {{ playbook.summary }} Use when: {{ playbook.selectionHint }}
 {% endfor %}
+{{ module_policy_summary }}
+{% if module_cards_summary %}
+
+{{ module_cards_summary }}
+{% endif %}
 
 Tool usage:
 - This turn is an image-editing workflow. Use only these tools: `get_playbook`, `get_image_state`, `get_preview_image`, and `apply_operations`.

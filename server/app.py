@@ -436,29 +436,33 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                 if progress_payload["tokenUsageTotal"] is not None
                 else None,
             )
+            should_emit_progress = (
+                progress_payload["found"] or last_progress_payload is not None
+            )
             if progress_signature != last_progress_signature:
                 last_progress_signature = progress_signature
-                last_progress_payload = {
-                    "found": progress_payload["found"],
-                    "status": progress_payload["status"],
-                    "phase": progress_payload["phase"],
-                    "toolCallsUsed": progress_payload["toolCallsUsed"],
-                    "maxToolCalls": progress_payload["maxToolCalls"],
-                    "appliedOperationCount": progress_payload["appliedOperationCount"],
-                    "operations": list(progress_payload["operations"]),
-                    "message": progress_payload["message"],
-                    "lastToolName": progress_payload["lastToolName"],
-                    "lastActionSummary": progress_payload["lastActionSummary"],
-                    "lastVerifierSummary": progress_payload["lastVerifierSummary"],
-                    "traceSummary": list(progress_payload["traceSummary"]),
-                    "progressVersion": progress_payload["progressVersion"],
-                    "requiresRenderCallback": progress_payload[
-                        "requiresRenderCallback"
-                    ],
-                    "tokenUsageLast": progress_payload["tokenUsageLast"],
-                    "tokenUsageTotal": progress_payload["tokenUsageTotal"],
-                }
-                yield _encode_sse("progress", progress_payload)
+                if should_emit_progress:
+                    last_progress_payload = {
+                        "found": progress_payload["found"],
+                        "status": progress_payload["status"],
+                        "phase": progress_payload["phase"],
+                        "toolCallsUsed": progress_payload["toolCallsUsed"],
+                        "maxToolCalls": progress_payload["maxToolCalls"],
+                        "appliedOperationCount": progress_payload["appliedOperationCount"],
+                        "operations": list(progress_payload["operations"]),
+                        "message": progress_payload["message"],
+                        "lastToolName": progress_payload["lastToolName"],
+                        "lastActionSummary": progress_payload["lastActionSummary"],
+                        "lastVerifierSummary": progress_payload["lastVerifierSummary"],
+                        "traceSummary": list(progress_payload["traceSummary"]),
+                        "progressVersion": progress_payload["progressVersion"],
+                        "requiresRenderCallback": progress_payload[
+                            "requiresRenderCallback"
+                        ],
+                        "tokenUsageLast": progress_payload["tokenUsageLast"],
+                        "tokenUsageTotal": progress_payload["tokenUsageTotal"],
+                    }
+                    yield _encode_sse("progress", progress_payload)
 
             await asyncio.sleep(0.25)
 

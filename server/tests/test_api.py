@@ -964,6 +964,77 @@ async def test_chat_stream_emits_progress_events(
 
 
 @pytest.mark.anyio
+async def test_chat_stream_suppresses_leading_not_found_progress(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge = StubBridge(
+        result=StubTurnResult(
+            plan=AgentPlan.model_validate(
+                {
+                    "assistantText": "Streaming done.",
+                    "continueRefining": False,
+                    "operations": [],
+                }
+            )
+        ),
+        progress_events=[
+            {
+                "found": False,
+                "status": "not_found",
+                "phase": "not_found",
+                "toolCallsUsed": 0,
+                "maxToolCalls": 0,
+                "appliedOperationCount": 0,
+                "operations": [],
+                "message": "No active request found for that requestId.",
+                "lastToolName": None,
+                "lastActionSummary": None,
+                "lastVerifierSummary": None,
+                "traceSummary": [],
+                "progressVersion": 0,
+                "requiresRenderCallback": False,
+                "tokenUsageLast": None,
+                "tokenUsageTotal": None,
+            },
+            {
+                "found": True,
+                "status": "running",
+                "phase": "running",
+                "toolCallsUsed": 1,
+                "maxToolCalls": 10,
+                "appliedOperationCount": 0,
+                "operations": [],
+                "message": "Waiting for Codex turn output",
+                "lastToolName": None,
+                "lastActionSummary": None,
+                "lastVerifierSummary": None,
+                "traceSummary": ["Waiting for Codex turn output"],
+                "progressVersion": 1,
+                "requiresRenderCallback": False,
+                "tokenUsageLast": None,
+                "tokenUsageTotal": None,
+            },
+        ],
+        plan_delay_seconds=0.3,
+    )
+    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+
+    payload = _sample_request_payload()
+    async with api_client.stream("POST", "/v1/chat/stream", json=payload) as response:
+        assert response.status_code == 200
+        chunks = []
+        async for chunk in response.aiter_text():
+            chunks.append(chunk)
+            joined = "".join(chunks)
+            if "event: final" in joined and "event: completed" in joined:
+                break
+
+    stream_text = "".join(chunks)
+    assert '"status":"not_found"' not in stream_text
+    assert '"message":"Waiting for Codex turn output"' in stream_text
+
+
+@pytest.mark.anyio
 async def test_chat_stream_emits_error_event_for_codex_error(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

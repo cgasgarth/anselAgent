@@ -15,6 +15,7 @@ USE_CCACHE="${ANSEL_USE_CCACHE:-1}"
 SKIP_CONFIG="${ANSEL_SKIP_CONFIG:-0}"
 INSTALL_BUILD="${ANSEL_INSTALL:-1}"
 MACOS_BUNDLE="${ANSEL_MACOS_BUNDLE:-0}"
+SKIP_SYSTEM_LINKS="${ANSEL_SKIP_SYSTEM_LINKS:-1}"
 
 if [[ "$MACOS_BUNDLE" == "1" ]]; then
   exec "$SCRIPT_DIR/build_ansel_macos_bundle.sh" "$@"
@@ -96,6 +97,10 @@ script_args=(
 
 if [[ "$INSTALL_BUILD" == "1" ]]; then
   script_args+=(--install)
+fi
+
+if [[ "$SKIP_SYSTEM_LINKS" == "1" ]]; then
+  script_args+=(--skip-system-links)
 fi
 
 if ((${#build_args[@]} > 0)); then
