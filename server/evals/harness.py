@@ -42,7 +42,10 @@ def evaluate_submission(
     ]
     canonical_actions = list(submission.plan.canonicalActions or [])
     binding_result = bind_canonical_actions(
-        case.request.imageSnapshot.editableSettings, canonical_actions
+        case.request.imageSnapshot.editableSettings,
+        canonical_actions,
+        image_width=case.request.imageSnapshot.metadata.width,
+        image_height=case.request.imageSnapshot.metadata.height,
     )
     resolved_operations = raw_operations + binding_result.operations
     validation = _validate_operations(

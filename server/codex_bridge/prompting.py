@@ -153,26 +153,56 @@ class PromptingMixin:
         state_payload = cast(
             JsonObject, json.loads(json.dumps(self._build_prompt_payload(request)))
         )
-        image_snapshot = state_payload.get("imageSnapshot", {})
-        editable_settings = image_snapshot.get("editableSettings", [])
+        raw_image_snapshot = state_payload.get("imageSnapshot")
+        image_snapshot: JsonObject = (
+            cast(JsonObject, raw_image_snapshot)
+            if isinstance(raw_image_snapshot, dict)
+            else {}
+        )
+        visible_setting_ids: set[str] = set()
+        payload_editable_settings = image_snapshot.get("editableSettings", [])
+        if isinstance(payload_editable_settings, list):
+            for setting in payload_editable_settings:
+                if not isinstance(setting, dict):
+                    continue
+                setting_dict = cast(JsonObject, setting)
+                setting_id = setting_dict.get("settingId")
+                if isinstance(setting_id, str) and setting_id:
+                    visible_setting_ids.add(setting_id)
         edit_graph = image_snapshot.get("editGraph", {})
         setting_by_id: dict[str, JsonObject] = {}
         base_float_setting_numbers: dict[str, float] = {}
-        if isinstance(editable_settings, list):
-            for setting in editable_settings:
+        if isinstance(payload_editable_settings, list):
+            for setting in payload_editable_settings:
                 if not isinstance(setting, dict):
                     continue
-                setting_id = setting.get("settingId")
+                setting_dict = cast(JsonObject, setting)
+                setting_id = setting_dict.get("settingId")
                 if isinstance(setting_id, str) and setting_id:
-                    setting_by_id[setting_id] = setting
-                    if setting.get("kind") == "set-float":
-                        current_number = setting.get("currentNumber")
+                    setting_by_id[setting_id] = setting_dict
+                    if setting_dict.get("kind") == "set-float":
+                        current_number = setting_dict.get("currentNumber")
                         if not isinstance(current_number, (int, float)):
-                            current_number = setting.get("defaultNumber")
+                            current_number = setting_dict.get("defaultNumber")
                         if isinstance(current_number, (int, float)):
                             base_float_setting_numbers[setting_id] = float(
                                 current_number
                             )
+        for setting in request.imageSnapshot.editableSettings:
+            setting_payload = cast(JsonObject, setting.model_dump(mode="json"))
+            setting_id = setting_payload.get("settingId")
+            if (
+                isinstance(setting_id, str)
+                and setting_id
+                and setting_id not in setting_by_id
+            ):
+                setting_by_id[setting_id] = setting_payload
+                if setting_payload.get("kind") == "set-float":
+                    current_number = setting_payload.get("currentNumber")
+                    if not isinstance(current_number, (int, float)):
+                        current_number = setting_payload.get("defaultNumber")
+                    if isinstance(current_number, (int, float)):
+                        base_float_setting_numbers[setting_id] = float(current_number)
         max_tool_calls = self._effective_tool_budget(request)
         (
             graph_payload,
@@ -182,16 +212,15 @@ class PromptingMixin:
         graph_property_ref_to_setting_id = {
             graph_ref: setting_id
             for graph_ref, setting_id in graph_property_ref_to_setting_id.items()
-            if setting_id in setting_by_id
+            if setting_id in visible_setting_ids
         }
         graph_property_by_setting_id = {
             setting_id: property_payload
             for setting_id, property_payload in graph_property_by_setting_id.items()
-            if setting_id in setting_by_id
+            if setting_id in visible_setting_ids
         }
         if isinstance(image_snapshot, dict):
-            image_snapshot_dict = cast(JsonObject, image_snapshot)
-            payload_edit_graph = image_snapshot_dict.get("editGraph")
+            payload_edit_graph = image_snapshot.get("editGraph")
             if isinstance(payload_edit_graph, dict):
                 edit_graph = cast(JsonObject, payload_edit_graph)
         with self._state_lock:
@@ -489,6 +518,7 @@ class PromptingMixin:
             playbooks=playbook_catalog_payload(),
             live_run_enabled=live_run_enabled,
             apply_budget_window=_DEFAULT_MAX_TOOL_CALLS_WITHOUT_APPLY + 2,
+            has_edit_graph=request.imageSnapshot.editGraph is not None,
             module_policy_summary=module_policy_summary,
             module_cards_summary=module_cards_summary,
         )

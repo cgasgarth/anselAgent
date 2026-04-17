@@ -1040,7 +1040,10 @@ def test_graph_control_operations_reject_hidden_crop_properties() -> None:
         bridge._clear_turn_context("thread-crop", "turn-crop")  # type: ignore[attr-defined]
 
     assert normalized == {}
-    assert error == "graph property 'group:clipping:0:rect:left' is not editable"
+    assert (
+        error
+        == "graph property 'group:clipping:0:rect:left' is not editable; use canonicalActions crop-normalized or crop-to-bounding-box instead"
+    )
 
 
 def test_playbook_catalog_lists_available_prompt_playbooks() -> None:
@@ -1101,8 +1104,18 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "grade-color" in prompt
     assert "rotate" in prompt
     assert "angleDegrees" in prompt
-    assert "crop-to-bounding-box" not in prompt
-    assert "crop-normalized" not in prompt
+    assert "crop-to-bounding-box" in prompt
+    assert "crop-normalized" in prompt
+    assert "boxWidth" in prompt
+    assert "paddingRatio" in prompt
+    assert "aspectRatioWidth" in prompt
+    assert "aspectRatioHeight" in prompt
+    assert "No authoritative `editGraph` is available for this turn." in prompt
+    assert "Do not invent graph controls" in prompt
+    assert (
+        "Prefer graph-based operations against `editGraph` nodes and properties."
+        not in prompt
+    )
     assert "apply_operations returns the refreshed preview automatically" in prompt
     assert "operations are auto-applied one at a time" in prompt
     assert "Do not introduce new operations in the final JSON" in prompt
@@ -1163,6 +1176,41 @@ def test_turn_prompt_is_always_live_run_focused() -> None:
     assert "Single-turn mode" not in prompt
 
 
+def test_turn_prompt_prefers_graph_controls_when_edit_graph_is_available() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    request.imageSnapshot.editGraph = {
+        "graphId": "edit-pipeline",
+        "graphType": "module-property-graph",
+        "nodes": [
+            {
+                "nodeId": "module:exposure:0",
+                "nodeType": "module-instance",
+                "semanticType": "exposure-module",
+                "properties": [
+                    {
+                        "propertyPath": "exposure",
+                        "semanticRole": "tone.exposure.primary",
+                        "label": "Exposure",
+                    }
+                ],
+            }
+        ],
+        "edges": [],
+        "subgraphs": [],
+    }
+
+    prompt = bridge._build_turn_prompt(request)  # type: ignore[attr-defined]
+
+    assert (
+        "Prefer graph-based operations against `editGraph` nodes and properties."
+        in prompt
+    )
+    assert "No `editGraph` is available in this run." not in prompt
+
+
 def test_crop_to_bounding_box_requires_box_coordinates() -> None:
     with pytest.raises(ValueError, match="crop-to-bounding-box requires"):
         AgentPlan.model_validate(
@@ -1176,6 +1224,30 @@ def test_crop_to_bounding_box_requires_box_coordinates() -> None:
                         "boxLeft": 0.2,
                         "boxTop": 0.2,
                         "boxWidth": 0.4,
+                    }
+                ],
+            }
+        )
+
+
+def test_crop_to_bounding_box_requires_complete_aspect_ratio_pair() -> None:
+    with pytest.raises(
+        ValueError,
+        match="crop-to-bounding-box aspectRatioWidth and aspectRatioHeight must be provided together",
+    ):
+        AgentPlan.model_validate(
+            {
+                "assistantText": "Crop to 4:5.",
+                "continueRefining": False,
+                "operations": [],
+                "canonicalActions": [
+                    {
+                        "action": "crop-to-bounding-box",
+                        "boxLeft": 0.2,
+                        "boxTop": 0.2,
+                        "boxWidth": 0.4,
+                        "boxHeight": 0.4,
+                        "aspectRatioWidth": 4,
                     }
                 ],
             }
@@ -1287,7 +1359,7 @@ def test_canonical_binder_binds_rotate_actions_to_clipping_angle() -> None:
     ]
 
 
-def test_canonical_binder_rejects_bounding_box_crop_actions() -> None:
+def test_canonical_binder_binds_bounding_box_crop_actions() -> None:
     request = _sample_request_with_canonical_controls()
     plan = AgentPlan.model_validate(
         {
@@ -1310,11 +1382,139 @@ def test_canonical_binder_rejects_bounding_box_crop_actions() -> None:
 
     bound_plan = bind_canonical_plan(request, plan)
 
-    assert bound_plan.operations == []
-    assert (
-        "crop-to-bounding-box is not supported in anselAgent"
-        in bound_plan.assistantText
+    assert [operation.target.actionPath for operation in bound_plan.operations] == [
+        "iop/clipping/cx",
+        "iop/clipping/cy",
+        "iop/clipping/cw",
+        "iop/clipping/ch",
+    ]
+    assert [operation.value.mode for operation in bound_plan.operations] == [
+        "set",
+        "set",
+        "set",
+        "set",
+    ]
+    assert [operation.value.number for operation in bound_plan.operations] == [
+        pytest.approx(0.15),
+        pytest.approx(0.21),
+        pytest.approx(0.75),
+        pytest.approx(0.69),
+    ]
+
+
+def test_canonical_binder_fits_bounding_box_crop_to_requested_aspect_ratio() -> None:
+    request = _sample_request_with_canonical_controls()
+    request.imageSnapshot.metadata.width = 1000
+    request.imageSnapshot.metadata.height = 1500
+    plan = AgentPlan.model_validate(
+        {
+            "assistantText": "Crop around the valley for a vertical 4:5 frame.",
+            "continueRefining": False,
+            "operations": [],
+            "canonicalActions": [
+                {
+                    "action": "crop-to-bounding-box",
+                    "boxLeft": 0.3,
+                    "boxTop": 0.2,
+                    "boxWidth": 0.35,
+                    "boxHeight": 0.2,
+                    "paddingRatio": 0.1,
+                    "aspectRatioWidth": 4,
+                    "aspectRatioHeight": 5,
+                }
+            ],
+        }
     )
+
+    bound_plan = bind_canonical_plan(request, plan)
+    crop_values = {
+        operation.target.actionPath: operation.value.number
+        for operation in bound_plan.operations
+    }
+
+    assert crop_values["iop/clipping/cx"] == pytest.approx(0.265)
+    assert crop_values["iop/clipping/cy"] == pytest.approx(0.125)
+    assert crop_values["iop/clipping/cw"] == pytest.approx(0.685)
+    assert crop_values["iop/clipping/ch"] == pytest.approx(0.475)
+    normalized_width = crop_values["iop/clipping/cw"] - crop_values["iop/clipping/cx"]
+    normalized_height = crop_values["iop/clipping/ch"] - crop_values["iop/clipping/cy"]
+    realized_ratio = (normalized_width * 1000.0) / (normalized_height * 1500.0)
+    assert realized_ratio == pytest.approx(0.8, abs=1e-6)
+
+
+def test_canonical_binder_reduces_padding_when_aspect_ratio_would_overflow() -> None:
+    request = _sample_request_with_canonical_controls()
+    request.imageSnapshot.metadata.width = 1000
+    request.imageSnapshot.metadata.height = 1500
+    plan = AgentPlan.model_validate(
+        {
+            "assistantText": "Square crop around the valley.",
+            "continueRefining": False,
+            "operations": [],
+            "canonicalActions": [
+                {
+                    "action": "crop-to-bounding-box",
+                    "boxLeft": 0.2,
+                    "boxTop": 0.15,
+                    "boxWidth": 0.6,
+                    "boxHeight": 0.55,
+                    "paddingRatio": 0.2,
+                    "aspectRatioWidth": 1,
+                    "aspectRatioHeight": 1,
+                }
+            ],
+        }
+    )
+
+    bound_plan = bind_canonical_plan(request, plan)
+    crop_values = {
+        operation.target.actionPath: operation.value.number
+        for operation in bound_plan.operations
+    }
+
+    assert crop_values["iop/clipping/cx"] == pytest.approx(0.0875)
+    assert crop_values["iop/clipping/cy"] == pytest.approx(0.15)
+    assert crop_values["iop/clipping/cw"] == pytest.approx(0.9125)
+    assert crop_values["iop/clipping/ch"] == pytest.approx(0.7)
+    normalized_width = crop_values["iop/clipping/cw"] - crop_values["iop/clipping/cx"]
+    normalized_height = crop_values["iop/clipping/ch"] - crop_values["iop/clipping/cy"]
+    realized_ratio = (normalized_width * 1000.0) / (normalized_height * 1500.0)
+    assert realized_ratio == pytest.approx(1.0, abs=1e-6)
+
+
+def test_canonical_binder_binds_normalized_crop_actions() -> None:
+    request = _sample_request_with_canonical_controls()
+    plan = AgentPlan.model_validate(
+        {
+            "assistantText": "Crop tighter.",
+            "continueRefining": False,
+            "operations": [],
+            "canonicalActions": [
+                {
+                    "action": "crop-normalized",
+                    "left": 0.1,
+                    "top": 0.2,
+                    "right": 0.8,
+                    "bottom": 0.9,
+                }
+            ],
+        }
+    )
+
+    bound_plan = bind_canonical_plan(request, plan)
+
+    assert [operation.target.actionPath for operation in bound_plan.operations] == [
+        "iop/clipping/cx",
+        "iop/clipping/cy",
+        "iop/clipping/cw",
+        "iop/clipping/ch",
+    ]
+    assert [operation.value.number for operation in bound_plan.operations] == [
+        pytest.approx(0.1),
+        pytest.approx(0.2),
+        pytest.approx(0.8),
+        pytest.approx(0.9),
+    ]
 
 
 def test_canonical_binder_deduplicates_ids_for_repeated_bound_settings() -> None:
@@ -1419,7 +1619,7 @@ def test_canonical_binder_surfaces_binding_failures_safely() -> None:
         "recover-highlights could not find a highlight control"
         in bound_plan.assistantText
     )
-    assert "crop-normalized is not supported in anselAgent" in bound_plan.assistantText
+    assert "crop controls are unavailable" in bound_plan.assistantText
 
 
 def test_turn_input_in_live_mode_includes_prompt_state_and_initial_preview_image() -> (
@@ -2270,7 +2470,7 @@ def test_apply_operations_tool_accepts_mixed_raw_and_canonical_actions(
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 
 
-def test_apply_operations_tool_reports_crop_bounding_box_as_unsupported(
+def test_apply_operations_tool_applies_bounding_box_crop_actions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bridge = CodexAppServerBridge(
@@ -2322,11 +2522,22 @@ def test_apply_operations_tool_reports_crop_bounding_box_as_unsupported(
         )
 
         result = sent_payloads[0]["result"]
-        assert result["success"] is False
-        assert (
-            "crop-to-bounding-box is not supported in anselAgent"
-            in result["contentItems"][0]["text"]
-        )
+        assert result["success"] is True
+        assert "Applied 4 operations" in result["contentItems"][0]["text"]
+        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        assert turn_context is not None
+        assert turn_context.setting_by_id["setting.clipping.cx"][
+            "currentNumber"
+        ] == pytest.approx(0.15)
+        assert turn_context.setting_by_id["setting.clipping.cy"][
+            "currentNumber"
+        ] == pytest.approx(0.21)
+        assert turn_context.setting_by_id["setting.clipping.cw"][
+            "currentNumber"
+        ] == pytest.approx(0.75)
+        assert turn_context.setting_by_id["setting.clipping.ch"][
+            "currentNumber"
+        ] == pytest.approx(0.69)
     finally:
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 

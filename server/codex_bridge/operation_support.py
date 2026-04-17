@@ -9,6 +9,30 @@ from .config import _WHITE_BALANCE_ACTION_PATH_PREFIXES
 from .models import TurnContext
 
 
+def _crop_graph_guidance(node_id: str, property_path: str) -> str | None:
+    lower_node_id = node_id.lower()
+    lower_property_path = property_path.lower()
+    crop_like_property = lower_property_path in {
+        "left",
+        "top",
+        "right",
+        "bottom",
+        "cx",
+        "cy",
+        "cw",
+        "ch",
+    }
+    if crop_like_property and (
+        "clipping" in lower_node_id
+        or lower_node_id.startswith("group:crop:")
+        or lower_node_id.startswith("module:crop:")
+    ):
+        return (
+            "use canonicalActions crop-normalized or crop-to-bounding-box instead"
+        )
+    return None
+
+
 def normalize_graph_operation(
     context: TurnContext,
     raw_operation: JsonObject,
@@ -36,6 +60,9 @@ def normalize_graph_operation(
     graph_ref = f"{node_id}:{property_path}"
     setting_id = context.graph_property_ref_to_setting_id.get(graph_ref)
     if setting_id is None:
+        crop_guidance = _crop_graph_guidance(node_id, property_path)
+        if crop_guidance is not None:
+            return None, f"graph property '{graph_ref}' is not editable; {crop_guidance}"
         return None, f"graph property '{graph_ref}' is not editable"
 
     setting = context.setting_by_id.get(setting_id)
