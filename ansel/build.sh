@@ -70,6 +70,7 @@ DO_CONFIG=1
 DO_BUILD=1
 DO_INSTALL=0
 SKIP_UPDATE_LENSFUN=0
+SKIP_SYSTEM_LINKS=0
 SUDO=""
 
 PRINT_HELP=0
@@ -174,6 +175,9 @@ parse_args()
 		--skip-lensfun)
 			SKIP_UPDATE_LENSFUN=1
 			;;
+		--skip-system-links)
+			SKIP_SYSTEM_LINKS=1
+			;;
 		-h|--help)
 			PRINT_HELP=1
 			;;
@@ -242,6 +246,9 @@ Update actions:
 															(default: disabled)
 	 --skip-lensfun    					Skip lensfun data update after installation
 															(default: disabled)
+   --skip-system-links         Skip creating global symlinks in /usr paths
+                              after installation
+                              (default: disabled)
 
 
 Features:
@@ -548,7 +555,7 @@ fi
 eval "$cmd_install"
 
 # install the desktop launcher and system-wide command
-if [ $DO_INSTALL ] ; then
+if [ $DO_INSTALL ] && [ $SKIP_SYSTEM_LINKS -eq 0 ] ; then
 	if [ -f "$INSTALL_PREFIX/bin/ansel" ]; then
 		[ ! -d "/usr/local/bin/" ] && $SUDO mkdir -p /usr/local/bin/
 		[ -f "/usr/local/bin/ansel" ] && $SUDO rm /usr/local/bin/ansel
@@ -562,6 +569,8 @@ if [ $DO_INSTALL ] ; then
 
 		$SUDO ln -s "$INSTALL_PREFIX"/share/applications/photos.ansel.ansel.desktop /usr/share/applications/ansel.desktop
 	fi
+elif [ $DO_INSTALL ] ; then
+	log info "Skipping global symlink installation"
 fi
 # update Lensfun
 echo
