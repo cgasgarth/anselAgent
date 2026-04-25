@@ -216,6 +216,10 @@ typedef struct dt_agent_chat_render_delivery_t
   gchar *endpoint;
 } dt_agent_chat_render_delivery_t;
 
+static gboolean _agent_chat_test_autorun_started = FALSE;
+static guint _agent_chat_test_refinement_pass_count = 0;
+static double _agent_chat_test_exposure_before = NAN;
+
 static gboolean _agent_chat_submit_request(dt_develop_t *dev,
                                            const char *message_text,
                                            guint refinement_pass_index,
@@ -230,6 +234,15 @@ static void _agent_chat_progress_finished(const dt_agent_client_progress_t *prog
                                           gpointer user_data);
 static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
                                          gpointer user_data);
+static gboolean _agent_chat_test_autorun_idle(gpointer user_data);
+static void _agent_chat_test_write_report(dt_develop_t *dev,
+                                          const char *status,
+                                          const char *error_message,
+                                          const dt_agent_chat_response_t *response,
+                                          const guint operation_count,
+                                          const guint execution_blocked_count,
+                                          const guint execution_failed_count);
+static void _agent_chat_test_schedule_quit(void);
 #endif
 
 static int32_t _darkroom_pending_imgid = UNKNOWN_IMAGE;
@@ -1835,6 +1848,165 @@ static gboolean _agent_chat_apply_operation_range(const GPtrArray *operations,
   return ok;
 }
 
+static gboolean _agent_chat_test_env_truthy(const char *name)
+{
+  const char *value = g_getenv(name);
+  return value && value[0] != '\0' && g_strcmp0(value, "0") != 0
+      && g_ascii_strcasecmp(value, "false") != 0
+      && g_ascii_strcasecmp(value, "no") != 0;
+}
+
+static guint _agent_chat_test_env_uint(const char *name, const guint fallback)
+{
+  const char *value = g_getenv(name);
+  if(!value || value[0] == '\0')
+    return fallback;
+
+  char *end = NULL;
+  const unsigned long parsed = g_ascii_strtoull(value, &end, 10);
+  if(end == value || parsed > G_MAXUINT)
+    return fallback;
+
+  return (guint)parsed;
+}
+
+static double _agent_chat_exposure_from_state(const dt_agent_image_state_t *state)
+{
+  if(!state || !state->controls)
+    return NAN;
+
+  for(guint i = 0; i < state->controls->len; i++)
+  {
+    const dt_agent_image_control_t *control = g_ptr_array_index(state->controls, i);
+    if(control && control->has_current_number
+       && g_strcmp0(control->action_path, "iop/exposure/exposure") == 0)
+      return control->current_number;
+  }
+
+  return NAN;
+}
+
+static double _agent_chat_current_exposure(dt_develop_t *dev)
+{
+  if(!dev)
+    return NAN;
+
+  dt_agent_image_state_t state;
+  dt_agent_image_state_init(&state);
+  g_autoptr(GError) error = NULL;
+  const gboolean collected = dt_agent_image_state_collect_from_dev(dev, &state, &error);
+  const double exposure = collected ? _agent_chat_exposure_from_state(&state) : NAN;
+  dt_agent_image_state_clear(&state);
+  return exposure;
+}
+
+static gboolean _agent_chat_test_quit_idle(gpointer user_data)
+{
+  (void)user_data;
+  dt_control_quit();
+  return G_SOURCE_REMOVE;
+}
+
+static void _agent_chat_test_schedule_quit(void)
+{
+  if(!g_getenv("ANSEL_AGENT_TEST_RESULT_FILE"))
+    return;
+
+  const guint delay_ms = _agent_chat_test_env_uint("ANSEL_AGENT_TEST_AUTORUN_QUIT_AFTER_MS", 1000u);
+  g_timeout_add(MAX(1u, delay_ms), _agent_chat_test_quit_idle, NULL);
+}
+
+static void _agent_chat_test_write_report(dt_develop_t *dev,
+                                          const char *status,
+                                          const char *error_message,
+                                          const dt_agent_chat_response_t *response,
+                                          const guint operation_count,
+                                          const guint execution_blocked_count,
+                                          const guint execution_failed_count)
+{
+  const char *report_path = g_getenv("ANSEL_AGENT_TEST_RESULT_FILE");
+  if(!report_path || report_path[0] == '\0')
+    return;
+
+  const double current_exposure = _agent_chat_current_exposure(dev);
+  if(isnan(_agent_chat_test_exposure_before))
+    _agent_chat_test_exposure_before = current_exposure;
+
+  GKeyFile *key_file = g_key_file_new();
+  g_key_file_set_string(key_file, "result", "status", status ? status : "error");
+  if(error_message && error_message[0] != '\0')
+    g_key_file_set_string(key_file, "result", "error", error_message);
+  g_key_file_set_double(key_file, "result", "exposure_before", _agent_chat_test_exposure_before);
+  g_key_file_set_double(key_file, "result", "current_exposure", current_exposure);
+  g_key_file_set_integer(key_file, "result", "operation_count", (gint)operation_count);
+  g_key_file_set_integer(key_file, "result", "execution_blocked_count", (gint)execution_blocked_count);
+  g_key_file_set_integer(key_file, "result", "execution_failed_count", (gint)execution_failed_count);
+  g_key_file_set_integer(key_file, "result", "active_image_id",
+                         dev ? dev->image_storage.id : UNKNOWN_IMAGE);
+
+  if(dev && dev->agent_chat.app_session_id)
+    g_key_file_set_string(key_file, "result", "app_session_id", dev->agent_chat.app_session_id);
+  if(dev && dev->agent_chat.image_session_id)
+    g_key_file_set_string(key_file, "result", "image_session_id", dev->agent_chat.image_session_id);
+  if(dev && dev->agent_chat.conversation_id)
+    g_key_file_set_string(key_file, "result", "active_conversation_id", dev->agent_chat.conversation_id);
+
+  const dt_agent_refinement_mode_t mode = response ? response->refinement_mode
+                                                   : DT_AGENT_REFINEMENT_MODE_UNKNOWN;
+  if(mode != DT_AGENT_REFINEMENT_MODE_UNKNOWN)
+    g_key_file_set_string(key_file, "result", "refinement_mode",
+                          dt_agent_refinement_mode_to_string(mode));
+  if(response)
+  {
+    g_key_file_set_integer(key_file, "result", "refinement_enabled",
+                           response->refinement_enabled ? 1 : 0);
+    g_key_file_set_integer(key_file, "result", "refinement_max_turns",
+                           (gint)response->refinement_max_passes);
+    if(response->refinement_stop_reason && response->refinement_stop_reason[0] != '\0')
+      g_key_file_set_string(key_file, "result", "refinement_stop_reason",
+                            response->refinement_stop_reason);
+  }
+  g_key_file_set_integer(key_file, "result", "refinement_pass_count",
+                         (gint)_agent_chat_test_refinement_pass_count);
+
+  g_autoptr(GError) error = NULL;
+  if(!g_key_file_save_to_file(key_file, report_path, &error) && error && error->message)
+    dt_control_log(_("Failed to write agent smoke report: %s"), error->message);
+  g_key_file_free(key_file);
+}
+
+static gboolean _agent_chat_test_autorun_idle(gpointer user_data)
+{
+  dt_develop_t *dev = (dt_develop_t *)user_data;
+  const char *prompt = g_getenv("ANSEL_AGENT_TEST_AUTORUN_PROMPT");
+  if(!prompt || prompt[0] == '\0')
+    return G_SOURCE_REMOVE;
+
+  if(!dev || dev->image_storage.id <= 0 || dev->agent_chat.is_loading)
+    return G_SOURCE_CONTINUE;
+
+  if(_agent_chat_test_autorun_started)
+    return G_SOURCE_REMOVE;
+
+  _agent_chat_test_autorun_started = TRUE;
+  _agent_chat_test_refinement_pass_count = 0;
+  _agent_chat_test_exposure_before = _agent_chat_current_exposure(dev);
+
+  const gboolean multi_turn = _agent_chat_test_env_truthy("ANSEL_AGENT_TEST_MULTI_TURN_ENABLED");
+  const guint max_turns = multi_turn
+                            ? MAX(1u, _agent_chat_test_env_uint("ANSEL_AGENT_TEST_MULTI_TURN_MAX_TURNS",
+                                                                 DT_AGENT_CHAT_DEFAULT_MAX_REFINEMENT_TURNS))
+                            : 1u;
+  if(!_agent_chat_submit_request(dev, prompt, 1u, max_turns, TRUE))
+  {
+    _agent_chat_test_write_report(dev, "error", "failed to submit autorun chat request",
+                                  NULL, 0u, 0u, 1u);
+    _agent_chat_test_schedule_quit();
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
 static gchar *_agent_chat_format_tool_progress_message(const dt_agent_client_progress_t *progress,
                                                        const guint previous_tool_calls,
                                                        const guint previous_live_edit_count,
@@ -1924,8 +2096,14 @@ static gboolean _agent_chat_submit_request(dt_develop_t *dev,
     return FALSE;
   }
 
+  const gboolean multi_turn = refinement_max_passes > 1u;
+  request.refinement_mode = multi_turn ? DT_AGENT_REFINEMENT_MODE_MULTI
+                                       : DT_AGENT_REFINEMENT_MODE_SINGLE;
+  request.refinement_enabled = multi_turn;
   request.refinement_pass_index = MAX(1u, refinement_pass_index);
-  request.refinement_max_passes = MAX(request.refinement_pass_index, refinement_max_passes);
+  request.refinement_max_passes = multi_turn
+                                    ? MAX(request.refinement_pass_index, refinement_max_passes)
+                                    : 1u;
 
   dt_agent_chat_submission_t *submission = g_malloc0(sizeof(*submission));
   submission->request_id = g_strdup(request.request_id);
@@ -1956,6 +2134,8 @@ static gboolean _agent_chat_submit_request(dt_develop_t *dev,
   }
 
   _agent_chat_set_active_request(dev, request_handle, submission->request_id);
+  if(g_getenv("ANSEL_AGENT_TEST_RESULT_FILE"))
+    _agent_chat_test_refinement_pass_count++;
   if(dev->agent_chat.input_entry && append_user_message)
     gtk_entry_set_text(GTK_ENTRY(dev->agent_chat.input_entry), "");
   _agent_chat_update_sensitivity(dev);
@@ -2072,6 +2252,8 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
   {
     _agent_chat_set_error(dev, NULL);
     _agent_chat_set_status(dev, _("Request canceled"));
+    _agent_chat_test_write_report(dev, "error", "request canceled", NULL, 0u, 0u, 1u);
+    _agent_chat_test_schedule_quit();
     return;
   }
 
@@ -2082,6 +2264,8 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
     _agent_chat_set_error(dev, message);
     _agent_chat_set_status(dev, _("Request failed"));
     _agent_chat_append_message(dev, _("assistant"), message);
+    _agent_chat_test_write_report(dev, "error", message, NULL, 0u, 0u, 1u);
+    _agent_chat_test_schedule_quit();
     return;
   }
 
@@ -2109,9 +2293,17 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
     _agent_chat_set_status(dev, _("Server error"));
     if(!result->response.message_text || result->response.message_text[0] == '\0')
       _agent_chat_append_message(dev, _("assistant"), message);
+    _agent_chat_test_write_report(dev, "error", message, &result->response,
+                                  result->response.operations
+                                    ? result->response.operations->len
+                                    : 0u,
+                                  0u, 1u);
+    _agent_chat_test_schedule_quit();
     return;
   }
 
+  guint execution_blocked_count = 0u;
+  guint execution_failed_count = 0u;
   if(result->response.operations && result->response.operations->len > 0)
   {
     dt_agent_execution_report_t execution_report;
@@ -2127,9 +2319,17 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
       _agent_chat_set_error(dev, message);
       _agent_chat_set_status(dev, _("Apply failed"));
       _agent_chat_append_message(dev, _("system"), message);
+      _agent_chat_test_write_report(dev, "error", message, &result->response,
+                                    result->response.operations->len,
+                                    execution_report.blocked_count,
+                                    execution_report.failed_count + 1u);
+      _agent_chat_test_schedule_quit();
       dt_agent_execution_report_clear(&execution_report);
       return;
     }
+
+    execution_blocked_count = execution_report.blocked_count;
+    execution_failed_count = execution_report.failed_count;
 
     dev->agent_chat.active_request_live_applied_count = result->response.operations->len;
     dt_dev_write_history(dev, FALSE);
@@ -2165,6 +2365,13 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
   }
 
   _agent_chat_set_status(dev, _("Multi-turn live edit complete"));
+  _agent_chat_test_write_report(dev, "ok", NULL, &result->response,
+                                result->response.operations
+                                  ? result->response.operations->len
+                                  : 0u,
+                                execution_blocked_count,
+                                execution_failed_count);
+  _agent_chat_test_schedule_quit();
 }
 #endif
 
@@ -3422,6 +3629,10 @@ void enter(dt_view_t *self)
   int ret = dt_dev_load_image(darktable.develop, imgid);
   _darkroom_image_loaded_callback(NULL, imgid, ret, self);
   _agent_chat_reset_for_current_image(dev, TRUE);
+#if HAVE_ANSEL_AGENT_CHAT_BACKEND
+  if(g_getenv("ANSEL_AGENT_TEST_AUTORUN_PROMPT"))
+    g_idle_add(_agent_chat_test_autorun_idle, dev);
+#endif
 }
 
 void leave(dt_view_t *self)

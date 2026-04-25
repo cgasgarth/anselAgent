@@ -3,6 +3,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DARKROOM_C = REPO_ROOT / "ansel" / "src" / "views" / "darkroom.c"
+DARKTABLE_C = REPO_ROOT / "ansel" / "src" / "common" / "darktable.c"
 
 
 def test_chat_window_has_minimum_size_and_bottom_input_row() -> None:
@@ -46,3 +47,23 @@ def test_chat_progress_ignores_not_found_status_updates() -> None:
     assert "if(progress->found)" in source
     assert "_agent_chat_set_status(dev, progress->status);" in source
     assert "_agent_chat_set_status(dev, progress->message);" in source
+
+
+def test_agent_smoke_autorun_hook_is_wired() -> None:
+    source = DARKROOM_C.read_text()
+
+    assert 'g_getenv("ANSEL_AGENT_TEST_AUTORUN_PROMPT")' in source
+    assert 'g_getenv("ANSEL_AGENT_TEST_RESULT_FILE")' in source
+    assert "g_idle_add(_agent_chat_test_autorun_idle, dev);" in source
+    assert "_agent_chat_test_write_report(dev, \"ok\"" in source
+    assert "dt_control_quit();" in source
+
+
+def test_agent_smoke_loads_cli_asset_when_launcher_passes_options() -> None:
+    source = DARKTABLE_C.read_text()
+
+    assert 'g_getenv("ANSEL_AGENT_TEST_AUTORUN_PROMPT")' in source
+    assert "for(int arg = argc - 1; arg >= 1; arg--)" in source
+    assert "argv[arg][0] != '-'" in source
+    assert "g_file_test(argv[arg], G_FILE_TEST_EXISTS)" in source
+    assert "dt_load_from_string(argv[arg], TRUE, NULL);" in source
