@@ -26,14 +26,17 @@ lensfun-update-data || true
 cp -R ~/.local/share/lensfun .
 ~/.local/bin/gtk-mac-bundler ansel.bundle
 mv package/ansel.app/Contents/MacOS/ansel-bin package/ansel.app/Contents/MacOS/ansel
+"$(pwd)/install-agent-server-bundle" package/ansel.app
 mv package/ansel.app/Contents/Resources/lib/gdk-pixbuf-2.0/*/loaders.cache package/ansel.app/Contents/Resources/etc/gtk-3.0/
 rm -Rf lensfun
 sed -i '' 's|/opt/local/share/locale||' package/ansel.app/Contents/Resources/etc/gtk-3.0/gtk.immodules
 glib-compile-schemas package/ansel.app/Contents/Resources/share/glib-2.0/schemas/
 sed -i '' 's|{VERSION}|'$(git describe --tags --long --match '*[0-9.][0-9.][0-9]'|cut -d- -f2|sed 's/^\([0-9]*\.[0-9]*\)$/\1.0/')'|' package/ansel.app/Contents/Info.plist
 sed -i '' 's|{COMMITS}|'$(git describe --tags --long --match '*[0-9.][0-9.][0-9]'|cut -d- -f3)'|' package/ansel.app/Contents/Info.plist
-for i in package/ansel.app/Contents/MacOS/ansel{,-cli,-cltest,-generate-cache}
+for i in package/ansel.app/Contents/MacOS/ansel-bin package/ansel.app/Contents/MacOS/ansel{,-cli,-cltest,-generate-cache}
 do
+	[[ -f "$i" ]] || continue
+	[[ "$(file -b "$i")" == *"Mach-O"* ]] || continue
 	install_name_tool -rpath @loader_path/../lib/ansel @loader_path/../Resources/lib/ansel "$i"
 done
 ln -s /Applications package/
@@ -41,8 +44,10 @@ ln -s /Applications package/
 if [ -z "$STRIPDEBUGINFO" ]
 then
 	find package/ansel.app/Contents/Resources/lib/ansel \( -name \*.dylib -or -name \*.so \) -exec dsymutil \{} \;
-	for i in package/ansel.app/Contents/MacOS/ansel{,-cli,-cltest,-generate-cache,-curve-tool,-noiseprofile}
+	for i in package/ansel.app/Contents/MacOS/ansel-bin package/ansel.app/Contents/MacOS/ansel{,-cli,-cltest,-generate-cache,-curve-tool,-noiseprofile}
 	do
+		[[ -f "$i" ]] || continue
+		[[ "$(file -b "$i")" == *"Mach-O"* ]] || continue
 		dsymutil "$i"
 	done
 fi

@@ -108,11 +108,8 @@ Open the installed app with Finder or:
 open -a /Applications/Ansel.app
 ```
 
-The app bundle is just the GUI. For AI agent features, run the local backend separately:
-
-```bash
-npm run server:start
-```
+The installed app starts the local AI backend automatically. Server and launcher
+logs are written to `~/Library/Logs/AnselAgent/`.
 
 ## Testing
 
