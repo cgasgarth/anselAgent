@@ -15,7 +15,7 @@ Ansel remains the source of truth for image state and rendering. The backend pla
 ## Architecture
 
 - `ansel/` contains the vendored Ansel source tree and the darkroom UI integration port
-- `server/` contains the FastAPI backend and Codex bridge
+- `server/` contains the FastAPI backend and OpenAI Agents SDK planner bridge
 - `shared/` contains the protocol models and schema
 
 Request flow:
@@ -34,7 +34,7 @@ Prerequisites:
 - macOS or Linux
 - `python3` 3.14+
 - `uv`
-- `codex` CLI installed and authenticated
+- `OPENAI_API_KEY` set for the OpenAI Agents SDK backend
 - macOS: Homebrew
 - Linux: Ansel build dependencies for your distribution
 - local CLI tools used by the build and test scripts: `ninja`, `cmake`, `curl`

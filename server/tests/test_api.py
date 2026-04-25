@@ -425,7 +425,7 @@ async def test_chat_returns_codex_plan_response(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post("/v1/chat", json=_sample_request_payload())
 
@@ -519,7 +519,7 @@ async def test_chat_preserves_multi_operation_order(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post("/v1/chat", json=_sample_request_payload())
 
@@ -546,7 +546,7 @@ async def test_chat_supports_operation_free_assistant_messages(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post("/v1/chat", json=_sample_request_payload())
 
@@ -592,7 +592,7 @@ async def test_chat_returns_white_balance_plan_response(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post(
         "/v1/chat", json=_sample_request_payload_with_white_balance()
@@ -640,7 +640,7 @@ async def test_chat_returns_multi_turn_refinement_status(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     payload = _sample_request_payload()
     payload["message"]["text"] = "Do a full edit"
@@ -688,7 +688,7 @@ async def test_cancel_chat_forwards_request_ids_to_bridge(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge()
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post(
         "/v1/chat/cancel",
@@ -727,7 +727,7 @@ async def test_cancel_chat_accepts_unknown_request_ids(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge()
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     def _cancel_request_false(**_: object) -> bool:
         return False
@@ -761,7 +761,7 @@ async def test_cancel_chat_forwards_optional_reason_to_bridge(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge()
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post(
         "/v1/chat/cancel",
@@ -790,7 +790,7 @@ async def test_chat_surfaces_codex_backend_errors(
             "codex_timeout", "Codex app server timed out", status_code=504
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post("/v1/chat", json=_sample_request_payload())
 
@@ -809,7 +809,7 @@ async def test_chat_surfaces_unexpected_backend_errors(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge(error=RuntimeError("boom"))
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     response = await api_client.post("/v1/chat", json=_sample_request_payload())
 
@@ -837,7 +837,7 @@ async def test_chat_stream_emits_final_event(
             )
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     payload = _sample_request_payload()
     async with api_client.stream("POST", "/v1/chat/stream", json=payload) as response:
@@ -931,7 +931,7 @@ async def test_chat_stream_emits_progress_events(
         ],
         plan_delay_seconds=0.6,
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     payload = _sample_request_payload()
     async with api_client.stream("POST", "/v1/chat/stream", json=payload) as response:
@@ -1016,7 +1016,7 @@ async def test_chat_stream_suppresses_leading_not_found_progress(
         ],
         plan_delay_seconds=0.3,
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     payload = _sample_request_payload()
     async with api_client.stream("POST", "/v1/chat/stream", json=payload) as response:
@@ -1042,7 +1042,7 @@ async def test_chat_stream_emits_error_event_for_codex_error(
             "codex_timeout", "Codex app server timed out", status_code=504
         )
     )
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     payload = _sample_request_payload()
     async with api_client.stream("POST", "/v1/chat/stream", json=payload) as response:
@@ -1139,7 +1139,7 @@ async def test_chat_render_callback_unblocks_tool_call(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge()
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     received_base64 = []
 
@@ -1174,7 +1174,7 @@ async def test_chat_render_callback_returns_unhandled_for_missing_session(
     api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bridge = StubBridge()
-    monkeypatch.setattr("server.app.get_codex_bridge", lambda: bridge)
+    monkeypatch.setattr("server.app.get_planner_bridge", lambda: bridge)
 
     def _provide_render_callback_false(**_: object) -> bool:
         return False

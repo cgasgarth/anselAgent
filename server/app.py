@@ -13,8 +13,9 @@ from fastapi.responses import JSONResponse, StreamingResponse, Response
 from pydantic import BaseModel, Field
 
 from server.bridge_types import PlannerBridge, PlannerTurnResult, RequestProgressPayload
-from server.codex_app_server import CodexAppServerBridge, CodexAppServerError
+from server.codex_app_server import CodexAppServerError
 from server.mock_planner import MockPlannerBridge
+from server.openai_agents_bridge import OpenAIAgentsBridge
 from server.request_validation import extract_duplicate_capability_ids
 from shared.protocol import (
     ErrorInfo,
@@ -31,7 +32,7 @@ from shared.protocol import (
 )
 
 logger = logging.getLogger("ansel_agent.server")
-codex_logger = logging.getLogger("ansel_agent.codex")
+planner_logger = logging.getLogger("ansel_agent.codex")
 
 
 class JsonFormatter(logging.Formatter):
@@ -56,14 +57,14 @@ class JsonFormatter(logging.Formatter):
 
 handler = logging.StreamHandler()
 handler.setFormatter(JsonFormatter())
-for configured_logger in (logger, codex_logger):
+for configured_logger in (logger, planner_logger):
     configured_logger.handlers.clear()
     configured_logger.addHandler(handler)
     configured_logger.setLevel(logging.INFO)
     configured_logger.propagate = False
 
 app = FastAPI(title="anselAgent server", version="0.2.0")
-_codex_bridge = CodexAppServerBridge()
+_planner_bridge = OpenAIAgentsBridge()
 _mock_bridge = MockPlannerBridge()
 
 
@@ -79,10 +80,10 @@ class CancelResponseEnvelope(BaseModel):
     message: str
 
 
-def get_codex_bridge() -> PlannerBridge:
+def get_planner_bridge() -> PlannerBridge:
     if os.environ.get("ANSEL_AGENT_USE_MOCK_RESPONSES") == "1":
         return _mock_bridge
-    return _codex_bridge
+    return _planner_bridge
 
 
 def build_request_error_refinement(request: RequestEnvelope) -> RefinementStatus:
@@ -225,8 +226,8 @@ def _log_fulfilled_request(
                 "imageSessionId": request.session.imageSessionId,
                 "conversationId": request.session.conversationId,
                 "turnId": request.session.turnId,
-                "codexThreadId": turn_result.thread_id,
-                "codexTurnId": turn_result.turn_id,
+                "plannerThreadId": turn_result.thread_id,
+                "plannerTurnId": turn_result.turn_id,
                 "refinement": response.refinement.model_dump(),
                 "operationCount": len(response.plan.operations) if response.plan else 0,
                 "assistantText": response.assistantMessage.text,
@@ -326,7 +327,7 @@ async def cancel_chat(request: CancelRequestEnvelope) -> CancelResponseEnvelope:
     )
 
     canceled = await asyncio.to_thread(
-        get_codex_bridge().cancel_request,
+        get_planner_bridge().cancel_request,
         request_id=request.requestId,
         app_session_id=request.session.appSessionId,
         image_session_id=request.session.imageSessionId,
@@ -351,7 +352,7 @@ async def chat(request: RequestEnvelope) -> ResponseEnvelope | JSONResponse:
     _log_accepted_request(request)
 
     try:
-        turn_result = await asyncio.to_thread(get_codex_bridge().plan, request)
+        turn_result = await asyncio.to_thread(get_planner_bridge().plan, request)
     except CodexAppServerError as exc:
         return build_error_response(
             request_id=request.requestId,
@@ -394,7 +395,7 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
     _log_accepted_request(request)
 
     async def event_generator():
-        bridge = get_codex_bridge()
+        bridge = get_planner_bridge()
         plan_task = asyncio.create_task(asyncio.to_thread(bridge.plan, request))
         last_progress_signature: tuple[object, ...] | None = None
         last_progress_payload: RequestProgressPayload | None = None
@@ -503,11 +504,11 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
                     if response.plan
                     else 0,
                     "operations": [],
-                    "message": "Waiting for Codex turn output",
+                    "message": "Waiting for planner output",
                     "lastToolName": None,
                     "lastActionSummary": None,
                     "lastVerifierSummary": None,
-                    "traceSummary": ["Waiting for Codex turn output"],
+                    "traceSummary": ["Waiting for planner output"],
                     "progressVersion": 0,
                     "requiresRenderCallback": False,
                     "tokenUsageLast": None,
@@ -517,13 +518,13 @@ async def chat_stream(request: RequestEnvelope) -> StreamingResponse:
             completion_progress["found"] = True
             completion_progress["status"] = "completed"
             completion_progress["phase"] = "completed"
-            completion_progress["message"] = "Codex plan completed"
+            completion_progress["message"] = "Planner plan completed"
             completion_progress["traceSummary"] = [
-                "Codex plan completed",
+                "Planner plan completed",
                 *[
                     entry
                     for entry in completion_progress["traceSummary"]
-                    if entry != "Codex plan completed"
+                    if entry != "Planner plan completed"
                 ],
             ]
             completion_progress["progressVersion"] = (
@@ -587,7 +588,7 @@ async def chat_render(request: Request) -> Response:
     if not payload_bytes:
         return Response(status_code=400, content="Empty body")
 
-    bridge = get_codex_bridge()
+    bridge = get_planner_bridge()
     success = await asyncio.to_thread(
         bridge.provide_render_callback,
         image_session_id=image_session_id,
