@@ -2011,8 +2011,10 @@ static void _agent_chat_test_write_report(dt_develop_t *dev,
   const double exposure_fallback = isnan(_agent_chat_test_exposure_after)
                                      ? _agent_chat_test_exposure_before
                                      : _agent_chat_test_exposure_after;
-  const double current_exposure = _agent_chat_test_exposure_after_response(exposure_fallback,
-                                                                          response);
+  const double current_exposure = isnan(_agent_chat_test_exposure_after)
+                                    ? _agent_chat_test_exposure_after_response(exposure_fallback,
+                                                                               response)
+                                    : _agent_chat_test_exposure_after;
   _agent_chat_test_exposure_after = current_exposure;
 
   GKeyFile *key_file = g_key_file_new();

@@ -87,11 +87,8 @@ def test_agent_smoke_report_does_not_recollect_full_state_after_apply() -> None:
     assert "exposure += operation->number;" in source
     assert "const double exposure_fallback = isnan(_agent_chat_test_exposure_after)" in source
     assert "_agent_chat_test_exposure_after = current_exposure;" in source
+    assert "const double current_exposure = isnan(_agent_chat_test_exposure_after)" in source
     assert "_agent_chat_test_exposure_after = _agent_chat_test_exposure_after_response(exposure_fallback," in source
-    assert (
-        "const double current_exposure = _agent_chat_test_exposure_after_response("
-        in source
-    )
 
 
 def test_agent_smoke_reuses_initial_request_context_for_refinement() -> None:
