@@ -76,3 +76,15 @@ def test_agent_chat_final_response_preserves_live_applied_count() -> None:
     assert "_agent_chat_clear_active_request(dev);" in source
     assert "_agent_chat_apply_operation_range(result->response.operations," in source
     assert "already_live_applied_count," in source
+
+
+def test_agent_smoke_report_does_not_recollect_full_state_after_apply() -> None:
+    source = DARKROOM_C.read_text()
+
+    assert "static double _agent_chat_test_exposure_after_response" in source
+    assert 'g_strcmp0(operation->action_path, "iop/exposure/exposure")' in source
+    assert "exposure += operation->number;" in source
+    assert (
+        "const double current_exposure = _agent_chat_test_exposure_after_response("
+        in source
+    )

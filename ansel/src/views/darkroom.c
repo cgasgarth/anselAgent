@@ -1900,6 +1900,29 @@ static double _agent_chat_current_exposure(dt_develop_t *dev)
   return exposure;
 }
 
+static double _agent_chat_test_exposure_after_response(const double fallback,
+                                                       const dt_agent_chat_response_t *response)
+{
+  double exposure = fallback;
+  if(!response || !response->operations)
+    return exposure;
+
+  for(guint i = 0; i < response->operations->len; i++)
+  {
+    const dt_agent_chat_operation_t *operation = g_ptr_array_index(response->operations, i);
+    if(!operation || operation->kind != DT_AGENT_OPERATION_SET_FLOAT
+       || g_strcmp0(operation->action_path, "iop/exposure/exposure") != 0)
+      continue;
+
+    if(operation->value_mode == DT_AGENT_VALUE_MODE_SET)
+      exposure = operation->number;
+    else if(operation->value_mode == DT_AGENT_VALUE_MODE_DELTA && !isnan(exposure))
+      exposure += operation->number;
+  }
+
+  return exposure;
+}
+
 static gboolean _agent_chat_test_quit_idle(gpointer user_data)
 {
   (void)user_data;
@@ -1928,9 +1951,10 @@ static void _agent_chat_test_write_report(dt_develop_t *dev,
   if(!report_path || report_path[0] == '\0')
     return;
 
-  const double current_exposure = _agent_chat_current_exposure(dev);
   if(isnan(_agent_chat_test_exposure_before))
-    _agent_chat_test_exposure_before = current_exposure;
+    _agent_chat_test_exposure_before = _agent_chat_current_exposure(dev);
+  const double current_exposure = _agent_chat_test_exposure_after_response(_agent_chat_test_exposure_before,
+                                                                          response);
 
   GKeyFile *key_file = g_key_file_new();
   g_key_file_set_string(key_file, "result", "status", status ? status : "error");
