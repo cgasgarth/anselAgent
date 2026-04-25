@@ -92,7 +92,7 @@ jobs:
         env:
           CCACHE_DIR: ~/.cache/ccache
         run: |
-          ./scripts/build_ansel_local.sh -- \
+          ./scripts/build_ansel_local.sh --build-package -- \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DBUILD_CMSTEST=OFF \
