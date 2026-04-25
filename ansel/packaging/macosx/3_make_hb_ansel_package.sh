@@ -33,6 +33,7 @@ trap 'echo "${BASH_SOURCE[0]}{${FUNCNAME[0]}}:${LINENO}: Error: command \`${BASH
 # Go to directory of script
 scriptDir=$(dirname "$0")
 cd "$scriptDir"/
+scriptDir=$(pwd)
 
 # Define base variables
 buildDir="../../install"
@@ -324,6 +325,9 @@ cp fonts/*  "$dtResourcesDir"/fonts/
 
 # Patch ansel.css - Solving font issue with Roboto condensed
 patch "$dtResourcesDir"/share/ansel/themes/ansel.css ansel.css.patch
+
+# Replace the app entrypoint with a launcher that starts the bundled agent server.
+"$scriptDir/install-agent-server-bundle" "$dtWorkingDir"
 
 # Create Icon file
 if [ -d "$buildDir"/Icons.iconset ]; then

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+set -u
+
+MACOS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+CONTENTS_DIR=$(cd "$MACOS_DIR/.." && pwd -P)
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
+SERVER_DIR="$RESOURCES_DIR/agent-server"
+ANSEL_BIN="$MACOS_DIR/ansel-bin"
+
+HOST="${ANSEL_AGENT_SERVER_HOST:-127.0.0.1}"
+PORT="${ANSEL_AGENT_SERVER_PORT:-8001}"
+HEALTH_URL="http://$HOST:$PORT/health"
+export ANSEL_AGENT_SERVER_URL="${ANSEL_AGENT_SERVER_URL:-http://$HOST:$PORT/v1/chat}"
+
+LOG_DIR="${ANSEL_AGENT_LOG_DIR:-$HOME/Library/Logs/AnselAgent}"
+PID_FILE="$LOG_DIR/server.pid"
+SERVER_LOG="$LOG_DIR/server.log"
+LAUNCHER_LOG="$LOG_DIR/launcher.log"
+
+mkdir -p "$LOG_DIR"
+
+log() {
+  printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LAUNCHER_LOG"
+}
+
+server_is_healthy() {
+  /usr/bin/curl --silent --fail --max-time 1 "$HEALTH_URL" >/dev/null 2>&1
+}
+
+wait_for_server() {
+  local deadline=$((SECONDS + 15))
+
+  while ((SECONDS < deadline)); do
+    if server_is_healthy; then
+      return 0
+    fi
+    sleep 0.25
+  done
+
+  return 1
+}
+
+choose_python() {
+  if [[ -x "$SERVER_DIR/.venv/bin/python" ]]; then
+    printf '%s\n' "$SERVER_DIR/.venv/bin/python"
+    return 0
+  fi
+
+  if [[ -x "/Users/cgas/Documents/Projects/anselAgent/.venv/bin/python" ]]; then
+    printf '%s\n' "/Users/cgas/Documents/Projects/anselAgent/.venv/bin/python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+
+  return 1
+}
+
+start_server() {
+  if server_is_healthy; then
+    return 0
+  fi
+
+  if [[ -f "$PID_FILE" ]]; then
+    local existing_pid
+    existing_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      if wait_for_server; then
+        return 0
+      fi
+      log "Server process $existing_pid is running but $HEALTH_URL is not healthy."
+    fi
+  fi
+
+  if [[ ! -d "$SERVER_DIR/server" ]]; then
+    log "Missing bundled agent server at $SERVER_DIR."
+    return 1
+  fi
+
+  local python_bin
+  if ! python_bin=$(choose_python); then
+    log "No Python interpreter found for bundled agent server."
+    return 1
+  fi
+
+  log "Starting agent server on $HEALTH_URL with $python_bin."
+  (
+    cd "$SERVER_DIR" || exit 1
+    ANSEL_AGENT_SERVER_HOST="$HOST" \
+      ANSEL_AGENT_SERVER_PORT="$PORT" \
+      PYTHONUNBUFFERED=1 \
+      nohup "$python_bin" -m uvicorn server.app:app --host "$HOST" --port "$PORT" \
+        >>"$SERVER_LOG" 2>&1 < /dev/null &
+    printf '%s\n' "$!" >"$PID_FILE"
+  )
+
+  if wait_for_server; then
+    return 0
+  fi
+
+  log "Agent server did not become healthy; continuing to launch Ansel."
+  return 1
+}
+
+start_server || true
+
+if [[ ! -x "$ANSEL_BIN" ]]; then
+  log "Missing Ansel binary at $ANSEL_BIN."
+  exit 127
+fi
+
+exec "$ANSEL_BIN" "$@"

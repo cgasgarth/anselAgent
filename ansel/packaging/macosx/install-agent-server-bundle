@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd -P)
+APP_DIR=$(cd "${1:?Usage: install-agent-server-bundle /path/to/Ansel.app}" && pwd -P)
+MACOS_DIR="$APP_DIR/Contents/MacOS"
+RESOURCES_DIR="$APP_DIR/Contents/Resources"
+SERVER_DIR="$RESOURCES_DIR/agent-server"
+
+if [[ ! -d "$MACOS_DIR" || ! -d "$RESOURCES_DIR" ]]; then
+  echo "Invalid app bundle path: $APP_DIR" >&2
+  exit 1
+fi
+
+if [[ -x "$MACOS_DIR/ansel" && ! -e "$MACOS_DIR/ansel-bin" ]]; then
+  mv "$MACOS_DIR/ansel" "$MACOS_DIR/ansel-bin"
+fi
+
+cp "$SCRIPT_DIR/ansel-agent-launcher" "$MACOS_DIR/ansel-agent-launcher.sh"
+chmod 755 "$MACOS_DIR/ansel-agent-launcher.sh"
+
+if ! command -v clang >/dev/null 2>&1; then
+  echo "clang is required to build the macOS app launcher." >&2
+  exit 1
+fi
+
+clang "$SCRIPT_DIR/ansel-agent-launcher.c" -o "$MACOS_DIR/ansel"
+chmod 755 "$MACOS_DIR/ansel"
+
+rm -rf "$SERVER_DIR"
+mkdir -p "$SERVER_DIR"
+
+rsync -a --delete \
+  --exclude '__pycache__' \
+  --exclude '.pytest_cache' \
+  "$REPO_ROOT/server" \
+  "$REPO_ROOT/shared" \
+  "$REPO_ROOT/pyproject.toml" \
+  "$REPO_ROOT/uv.lock" \
+  "$SERVER_DIR/"
+
+if command -v uv >/dev/null 2>&1; then
+  UV_PROJECT_ENVIRONMENT="$SERVER_DIR/.venv" uv sync \
+    --project "$SERVER_DIR" \
+    --no-dev \
+    --frozen
+else
+  echo "warning: uv was not found; bundled server will use an existing Python environment at launch." >&2
+fi
