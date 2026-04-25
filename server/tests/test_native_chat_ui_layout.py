@@ -82,8 +82,11 @@ def test_agent_smoke_report_does_not_recollect_full_state_after_apply() -> None:
     source = DARKROOM_C.read_text()
 
     assert "static double _agent_chat_test_exposure_after_response" in source
+    assert "static double _agent_chat_test_exposure_after = NAN;" in source
     assert 'g_strcmp0(operation->action_path, "iop/exposure/exposure")' in source
     assert "exposure += operation->number;" in source
+    assert "const double exposure_fallback = isnan(_agent_chat_test_exposure_after)" in source
+    assert "_agent_chat_test_exposure_after = current_exposure;" in source
     assert (
         "const double current_exposure = _agent_chat_test_exposure_after_response("
         in source

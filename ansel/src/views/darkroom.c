@@ -219,6 +219,7 @@ typedef struct dt_agent_chat_render_delivery_t
 static gboolean _agent_chat_test_autorun_started = FALSE;
 static guint _agent_chat_test_refinement_pass_count = 0;
 static double _agent_chat_test_exposure_before = NAN;
+static double _agent_chat_test_exposure_after = NAN;
 static gboolean _agent_chat_test_cached_request_valid = FALSE;
 static dt_agent_chat_request_t _agent_chat_test_cached_request;
 
@@ -2007,8 +2008,12 @@ static void _agent_chat_test_write_report(dt_develop_t *dev,
 
   if(isnan(_agent_chat_test_exposure_before))
     _agent_chat_test_exposure_before = _agent_chat_current_exposure(dev);
-  const double current_exposure = _agent_chat_test_exposure_after_response(_agent_chat_test_exposure_before,
+  const double exposure_fallback = isnan(_agent_chat_test_exposure_after)
+                                     ? _agent_chat_test_exposure_before
+                                     : _agent_chat_test_exposure_after;
+  const double current_exposure = _agent_chat_test_exposure_after_response(exposure_fallback,
                                                                           response);
+  _agent_chat_test_exposure_after = current_exposure;
 
   GKeyFile *key_file = g_key_file_new();
   g_key_file_set_string(key_file, "result", "status", status ? status : "error");
@@ -2069,6 +2074,7 @@ static gboolean _agent_chat_test_autorun_idle(gpointer user_data)
   _agent_chat_test_autorun_started = TRUE;
   _agent_chat_test_refinement_pass_count = 0;
   _agent_chat_test_exposure_before = _agent_chat_current_exposure(dev);
+  _agent_chat_test_exposure_after = _agent_chat_test_exposure_before;
 
   const gboolean multi_turn = _agent_chat_test_env_truthy("ANSEL_AGENT_TEST_MULTI_TURN_ENABLED");
   const guint max_turns = multi_turn
