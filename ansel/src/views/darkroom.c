@@ -2419,6 +2419,11 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
 
     execution_blocked_count = execution_report.blocked_count;
     execution_failed_count = execution_report.failed_count;
+    const double exposure_fallback = isnan(_agent_chat_test_exposure_after)
+                                       ? _agent_chat_test_exposure_before
+                                       : _agent_chat_test_exposure_after;
+    _agent_chat_test_exposure_after = _agent_chat_test_exposure_after_response(exposure_fallback,
+                                                                               &result->response);
 
     dev->agent_chat.active_request_live_applied_count = result->response.operations->len;
     dt_dev_write_history(dev, FALSE);
