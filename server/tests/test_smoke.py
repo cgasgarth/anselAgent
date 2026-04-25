@@ -30,7 +30,6 @@ def _sample_request(*, live_run: bool = True) -> RequestEnvelope:
                 "turnId": "turn-1",
             },
             "message": {"role": "user", "text": "Brighten the image"},
-            "fast": False,
             "refinement": {
                 "mode": "multi-turn" if live_run else "single-turn",
                 "enabled": live_run,

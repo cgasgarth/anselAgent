@@ -14,8 +14,6 @@ from .config import (
     _DEFAULT_MODEL,
     _DEFAULT_PERSONALITY,
     _DEFAULT_REASONING_EFFORT,
-    _FAST_MODE_MODEL,
-    _FAST_MODE_REASONING_EFFORT,
     _DEFAULT_SANDBOX,
     _THREAD_DEVELOPER_INSTRUCTIONS,
     logger,
@@ -35,14 +33,12 @@ class TurnsMixin:
 
     @staticmethod
     def _model_for_request(request: RequestEnvelope) -> str | None:
-        if request.fast and _FAST_MODE_MODEL:
-            return _FAST_MODE_MODEL
+        del request
         return _DEFAULT_MODEL
 
     @staticmethod
     def _effort_for_request(request: RequestEnvelope) -> str:
-        if request.fast:
-            return _FAST_MODE_REASONING_EFFORT
+        del request
         return _DEFAULT_REASONING_EFFORT
 
     @staticmethod

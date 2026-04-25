@@ -23,7 +23,6 @@ def build_request(
                 "turnId": "turn-1",
             },
             "message": {"role": "user", "text": text},
-            "fast": False,
             "refinement": {
                 "mode": "multi-turn",
                 "enabled": True,

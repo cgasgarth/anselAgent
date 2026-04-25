@@ -1782,7 +1782,6 @@ static gboolean _agent_chat_build_request(dt_develop_t *dev,
   request->refinement_enabled = TRUE;
   request->refinement_pass_index = 1u;
   request->refinement_max_passes = DT_AGENT_CHAT_DEFAULT_MAX_REFINEMENT_TURNS;
-  request->fast_mode = FALSE;
   request->refinement_goal_text = g_strdup(message_text);
   _agent_chat_fill_ui_context(request);
 

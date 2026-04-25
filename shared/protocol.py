@@ -277,7 +277,6 @@ class RequestEnvelope(StrictBaseModel):
     requestId: str = Field(min_length=1)
     session: RequestSession
     message: UserMessage
-    fast: bool
     refinement: RefinementRequest
     uiContext: UIContext
     capabilityManifest: CapabilityManifest
