@@ -174,6 +174,8 @@ jobs:
       - name: Run single-turn mock smoke test
         env:
           CLEAN_RUNTIME: '1'
+          ANSEL_BACKTRACE_DIR: ${{ runner.temp }}/single-turn-backtraces
+          ANSEL_LOG_FILE: ${{ runner.temp }}/single-turn-ansel.log
           INSTALL_PREFIX: ${{ runner.temp }}/ansel-install-root/.install-master
           KEEP_ARTIFACTS: '1'
           REPORT_FILE: ${{ runner.temp }}/single-turn-report.ini
@@ -186,6 +188,8 @@ jobs:
       - name: Run multi-turn mock smoke test
         env:
           CLEAN_RUNTIME: '1'
+          ANSEL_BACKTRACE_DIR: ${{ runner.temp }}/multi-turn-backtraces
+          ANSEL_LOG_FILE: ${{ runner.temp }}/multi-turn-ansel.log
           INSTALL_PREFIX: ${{ runner.temp }}/ansel-install-root/.install-master
           KEEP_ARTIFACTS: '1'
           REPORT_FILE: ${{ runner.temp }}/multi-turn-report.ini
@@ -203,6 +207,10 @@ jobs:
           retention-days: 7
           path: |
             ${{ runner.temp }}/single-turn-report.ini
+            ${{ runner.temp }}/single-turn-ansel.log
             ${{ runner.temp }}/single-turn-server.log
+            ${{ runner.temp }}/single-turn-backtraces
             ${{ runner.temp }}/multi-turn-report.ini
+            ${{ runner.temp }}/multi-turn-ansel.log
             ${{ runner.temp }}/multi-turn-server.log
+            ${{ runner.temp }}/multi-turn-backtraces

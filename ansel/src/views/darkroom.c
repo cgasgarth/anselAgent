@@ -2240,6 +2240,9 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
 
   const gboolean active_request = _agent_chat_submission_matches_active_request(dev, submission);
   const gboolean current_session = _agent_chat_submission_matches_current_session(dev, submission);
+  const guint already_live_applied_count = active_request
+                                             ? dev->agent_chat.active_request_live_applied_count
+                                             : 0u;
   if(active_request)
     _agent_chat_clear_active_request(dev);
 
@@ -2310,7 +2313,7 @@ static void _agent_chat_request_finished(const dt_agent_client_result_t *result,
     dt_agent_execution_report_init(&execution_report);
     g_autoptr(GError) error = NULL;
     if(!_agent_chat_apply_operation_range(result->response.operations,
-                                          dev->agent_chat.active_request_live_applied_count,
+                                          already_live_applied_count,
                                           &execution_report,
                                           &error))
     {

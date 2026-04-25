@@ -67,3 +67,12 @@ def test_agent_smoke_loads_cli_asset_when_launcher_passes_options() -> None:
     assert "argv[arg][0] != '-'" in source
     assert "g_file_test(argv[arg], G_FILE_TEST_EXISTS)" in source
     assert "dt_load_from_string(argv[arg], TRUE, NULL);" in source
+
+
+def test_agent_chat_final_response_preserves_live_applied_count() -> None:
+    source = DARKROOM_C.read_text()
+
+    assert "const guint already_live_applied_count = active_request" in source
+    assert "_agent_chat_clear_active_request(dev);" in source
+    assert "_agent_chat_apply_operation_range(result->response.operations," in source
+    assert "already_live_applied_count," in source
