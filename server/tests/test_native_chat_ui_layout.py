@@ -88,3 +88,16 @@ def test_agent_smoke_report_does_not_recollect_full_state_after_apply() -> None:
         "const double current_exposure = _agent_chat_test_exposure_after_response("
         in source
     )
+
+
+def test_agent_smoke_reuses_initial_request_context_for_refinement() -> None:
+    source = DARKROOM_C.read_text()
+
+    assert "static dt_agent_chat_request_t _agent_chat_test_cached_request;" in source
+    assert "_agent_chat_test_cache_request_context(request);" in source
+    assert "static gboolean _agent_chat_test_copy_cached_request" in source
+    assert "const gboolean use_cached_test_context = refinement_pass_index > 1u" in source
+    assert (
+        "_agent_chat_build_request(dev, message_text, &request, use_cached_test_context, &error)"
+        in source
+    )

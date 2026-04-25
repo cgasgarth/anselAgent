@@ -219,6 +219,8 @@ typedef struct dt_agent_chat_render_delivery_t
 static gboolean _agent_chat_test_autorun_started = FALSE;
 static guint _agent_chat_test_refinement_pass_count = 0;
 static double _agent_chat_test_exposure_before = NAN;
+static gboolean _agent_chat_test_cached_request_valid = FALSE;
+static dt_agent_chat_request_t _agent_chat_test_cached_request;
 
 static gboolean _agent_chat_submit_request(dt_develop_t *dev,
                                            const char *message_text,
@@ -242,6 +244,10 @@ static void _agent_chat_test_write_report(dt_develop_t *dev,
                                           const guint operation_count,
                                           const guint execution_blocked_count,
                                           const guint execution_failed_count);
+static void _agent_chat_test_cache_request_context(const dt_agent_chat_request_t *request);
+static gboolean _agent_chat_test_copy_cached_request(dt_develop_t *dev,
+                                                     const char *message_text,
+                                                     dt_agent_chat_request_t *request);
 static void _agent_chat_test_schedule_quit(void);
 #endif
 
@@ -1774,9 +1780,13 @@ static void _agent_chat_fill_ui_context(dt_agent_chat_request_t *request)
 static gboolean _agent_chat_build_request(dt_develop_t *dev,
                                           const char *message_text,
                                           dt_agent_chat_request_t *request,
+                                          const gboolean prefer_cached_context,
                                           GError **error)
 {
   dt_agent_chat_request_init(request);
+
+  if(prefer_cached_context && _agent_chat_test_copy_cached_request(dev, message_text, request))
+    return TRUE;
 
   if(!dev->agent_chat.app_session_id)
     dev->agent_chat.app_session_id = g_uuid_string_random();
@@ -1820,6 +1830,7 @@ static gboolean _agent_chat_build_request(dt_develop_t *dev,
     return FALSE;
   }
 
+  _agent_chat_test_cache_request_context(request);
   return TRUE;
 }
 
@@ -1921,6 +1932,49 @@ static double _agent_chat_test_exposure_after_response(const double fallback,
   }
 
   return exposure;
+}
+
+static void _agent_chat_test_cache_request_context(const dt_agent_chat_request_t *request)
+{
+  if(!g_getenv("ANSEL_AGENT_TEST_RESULT_FILE") || !request)
+    return;
+
+  if(_agent_chat_test_cached_request_valid)
+    dt_agent_chat_request_clear(&_agent_chat_test_cached_request);
+
+  dt_agent_chat_request_copy(&_agent_chat_test_cached_request, request);
+  _agent_chat_test_cached_request_valid = TRUE;
+}
+
+static gboolean _agent_chat_test_copy_cached_request(dt_develop_t *dev,
+                                                     const char *message_text,
+                                                     dt_agent_chat_request_t *request)
+{
+  if(!g_getenv("ANSEL_AGENT_TEST_RESULT_FILE")
+     || !_agent_chat_test_cached_request_valid || !dev || !message_text || !request)
+    return FALSE;
+
+  dt_agent_chat_request_copy(request, &_agent_chat_test_cached_request);
+
+  g_free(request->request_id);
+  g_free(request->turn_id);
+  g_free(request->message_text);
+  g_free(request->refinement_goal_text);
+  g_free(request->app_session_id);
+  g_free(request->image_session_id);
+  g_free(request->conversation_id);
+
+  request->request_id = g_uuid_string_random();
+  request->turn_id = g_strdup(request->request_id);
+  request->message_text = g_strdup(message_text);
+  request->refinement_goal_text = g_strdup(message_text);
+  request->app_session_id = g_strdup(dev->agent_chat.app_session_id);
+  request->image_session_id = g_strdup(dev->agent_chat.image_session_id);
+  request->conversation_id = g_strdup(dev->agent_chat.conversation_id);
+
+  return request->request_id && request->turn_id && request->message_text
+      && request->refinement_goal_text && request->app_session_id
+      && request->image_session_id && request->conversation_id;
 }
 
 static gboolean _agent_chat_test_quit_idle(gpointer user_data)
@@ -2111,7 +2165,9 @@ static gboolean _agent_chat_submit_request(dt_develop_t *dev,
 
   dt_agent_chat_request_t request;
   g_autoptr(GError) error = NULL;
-  if(!_agent_chat_build_request(dev, message_text, &request, &error))
+  const gboolean use_cached_test_context = refinement_pass_index > 1u
+                                           && g_getenv("ANSEL_AGENT_TEST_RESULT_FILE");
+  if(!_agent_chat_build_request(dev, message_text, &request, use_cached_test_context, &error))
   {
     _agent_chat_set_loading(dev, FALSE);
     _agent_chat_set_error(dev, error && error->message ? error->message
