@@ -76,7 +76,7 @@ cleanup() {
   fi
 
   if [[ "$KEEP_ARTIFACTS" != "1" ]]; then
-    rm -f "$REPORT_FILE" "$SERVER_LOG"
+    rm -f "$REPORT_FILE" "$SERVER_LOG" "$ANSEL_LOG_FILE"
   fi
 
   if [[ "$CLEAN_RUNTIME" == "1" ]]; then
@@ -145,6 +145,8 @@ PY
 
 REPORT_FILE="${REPORT_FILE:-$(make_temp_file ansel-agent-report .ini)}"
 SERVER_LOG="${SERVER_LOG:-$(make_temp_file ansel-agent-server .log)}"
+ANSEL_LOG_FILE="${ANSEL_LOG_FILE:-$(make_temp_file ansel-agent-app .log)}"
+ANSEL_BACKTRACE_DIR="${ANSEL_BACKTRACE_DIR:-$(dirname "$ANSEL_LOG_FILE")/ansel-backtraces}"
 
 if [[ -z "${PORT:-${ANSEL_AGENT_SERVER_PORT:-}}" ]]; then
   PORT="$((20000 + RANDOM % 20000))"
@@ -202,7 +204,9 @@ fi
 echo "Server: $SERVER_URL"
 echo "Asset:  $ASSET_PATH"
 echo "Report: $REPORT_FILE"
+echo "Log:    $ANSEL_LOG_FILE"
 
+set +e
 ANSEL_AGENT_SERVER_URL="$SERVER_URL" \
   ANSEL_AGENT_SERVER_TIMEOUT_SECONDS="$SERVER_TIMEOUT_SECONDS" \
   ANSEL_AGENT_TEST_AUTORUN_PROMPT="$AUTORUN_PROMPT" \
@@ -211,7 +215,17 @@ ANSEL_AGENT_SERVER_URL="$SERVER_URL" \
   ANSEL_AGENT_TEST_MULTI_TURN_ENABLED="$MULTI_TURN_ENABLED" \
   ANSEL_AGENT_TEST_MULTI_TURN_MAX_TURNS="$MULTI_TURN_MAX_TURNS" \
   RUNTIME_DIR="$RUNTIME_DIR" \
-  run_with_timeout "${ANSEL_TIMEOUT_SECONDS}s" "${launcher[@]}"
+  run_with_timeout "${ANSEL_TIMEOUT_SECONDS}s" "${launcher[@]}" >"$ANSEL_LOG_FILE" 2>&1
+ansel_status=$?
+set -e
+
+if [[ "$ansel_status" -ne 0 ]]; then
+  echo "Ansel exited with status $ansel_status. See $ANSEL_LOG_FILE" >&2
+  tail -n 120 "$ANSEL_LOG_FILE" >&2 || true
+  mkdir -p "$ANSEL_BACKTRACE_DIR"
+  find /tmp -maxdepth 1 -type f -name 'ansel_bt_*.txt' -exec cp {} "$ANSEL_BACKTRACE_DIR/" \; 2>/dev/null || true
+  exit "$ansel_status"
+fi
 
 "$PYTHON_BIN" - "$REPORT_FILE" "$SERVER_LOG" "$EXPECTED_STATUS" "$EXPECTED_MIN_OPERATION_COUNT" "$EXPECTED_DELTA" "$EXPECTED_FINAL_EXPOSURE" "$EXPECTED_BLOCKED_COUNT" "$EXPECTED_MIN_REFINEMENT_PASSES" "$EXPECTED_MAX_REFINEMENT_PASSES" "$EXPECTED_REFINEMENT_MODE" "$EXPECTED_REFINEMENT_STOP_REASON" <<'PY'
 import configparser

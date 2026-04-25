@@ -1318,7 +1318,18 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
 #ifndef MAC_INTEGRATION
     // load image(s) specified on cmdline.
     // this has to happen after lua is initialized as image import can run lua code
-    if (argc == 2)
+    if(g_getenv("ANSEL_AGENT_TEST_AUTORUN_PROMPT"))
+    {
+      for(int arg = argc - 1; arg >= 1; arg--)
+      {
+        if(argv[arg] && argv[arg][0] != '-' && g_file_test(argv[arg], G_FILE_TEST_EXISTS))
+        {
+          (void)dt_load_from_string(argv[arg], TRUE, NULL);
+          break;
+        }
+      }
+    }
+    else if (argc == 2)
     {
       // If only one image is listed, attempt to load it in darkroom
       (void)dt_load_from_string(argv[1], TRUE, NULL);

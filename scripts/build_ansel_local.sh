@@ -108,7 +108,12 @@ if ((${#build_args[@]} > 0)); then
 fi
 
 if ((${#configure_cmake_args[@]} > 0)); then
-  script_args+=(-- "${configure_cmake_args[@]}")
+  extra_cmake_options="${configure_cmake_args[*]}"
+  if [[ -n "${CMAKE_PREFIX_PATH:-}" ]]; then
+    export CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH $extra_cmake_options"
+  else
+    export CMAKE_PREFIX_PATH="$extra_cmake_options"
+  fi
 fi
 
 exec "$ANSEL_DIR/build.sh" "${script_args[@]}"
