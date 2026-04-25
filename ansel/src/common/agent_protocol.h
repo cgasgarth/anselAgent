@@ -60,7 +60,6 @@ typedef struct dt_agent_chat_request_t
   gboolean refinement_enabled;
   guint refinement_pass_index;
   guint refinement_max_passes;
-  gboolean fast_mode;
   gchar *refinement_goal_text;
   dt_agent_ui_context_t ui_context;
   GPtrArray *capabilities;

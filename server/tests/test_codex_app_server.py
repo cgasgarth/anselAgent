@@ -9,8 +9,6 @@ from server.codex_app_server import (
     CodexAppServerError,
     _DEFAULT_MODEL,
     _DEFAULT_REASONING_EFFORT,
-    _FAST_MODE_MODEL,
-    _FAST_MODE_REASONING_EFFORT,
     _TOOL_APPLY_OPERATIONS,
     _TOOL_GET_IMAGE_STATE,
     _TOOL_GET_PLAYBOOK,
@@ -48,7 +46,6 @@ def _sample_request() -> RequestEnvelope:
                 "role": "user",
                 "text": "Do a full edit so this becomes a polished gallery-ready landscape photo.",
             },
-            "fast": False,
             "refinement": {
                 "mode": "multi-turn",
                 "enabled": True,
@@ -669,20 +666,13 @@ def test_output_schema_marks_nullable_object_fields_as_required() -> None:
     assert "canonicalActions" in agent_plan["required"]
 
 
-def test_model_selection_uses_default_model_when_fast_mode_disabled() -> None:
+def test_model_selection_always_uses_default_model() -> None:
     request = _sample_request()
 
     assert CodexAppServerBridge._model_for_request(request) == _DEFAULT_MODEL
 
 
-def test_model_selection_uses_fast_mode_model_when_fast_mode_enabled() -> None:
-    request = _sample_request()
-    request.fast = True
-
-    assert CodexAppServerBridge._model_for_request(request) == _FAST_MODE_MODEL
-
-
-def test_effort_selection_uses_default_effort_when_fast_mode_disabled() -> None:
+def test_effort_selection_always_uses_default_effort() -> None:
     request = _sample_request()
 
     assert (
@@ -690,22 +680,11 @@ def test_effort_selection_uses_default_effort_when_fast_mode_disabled() -> None:
     )
 
 
-def test_effort_selection_uses_fast_mode_effort_when_fast_mode_enabled() -> None:
-    request = _sample_request()
-    request.fast = True
-
-    assert (
-        CodexAppServerBridge._effort_for_request(request) == _FAST_MODE_REASONING_EFFORT
-    )
-
-
 def test_developer_instructions_require_proactive_full_edit_planning() -> None:
     assert "Core rules" in _THREAD_DEVELOPER_INSTRUCTIONS
     assert "expert RAW photo editor" in _THREAD_DEVELOPER_INSTRUCTIONS
-    assert _DEFAULT_MODEL == "gpt-5.4"
-    assert _DEFAULT_REASONING_EFFORT == "high"
-    assert _FAST_MODE_MODEL == "gpt-5.4-mini"
-    assert _FAST_MODE_REASONING_EFFORT == "high"
+    assert _DEFAULT_MODEL == "gpt-5.5"
+    assert _DEFAULT_REASONING_EFFORT == "medium"
     assert (
         "This is an image-editing workflow, not a coding workflow."
         in _THREAD_DEVELOPER_INSTRUCTIONS
@@ -1128,7 +1107,6 @@ def test_turn_prompt_tells_codex_to_infer_broad_edit_plan_from_visual_context() 
     assert "Preview:" not in prompt
     assert "Histogram summary:" not in prompt
     assert "Editable modules:" not in prompt
-    assert "Fast mode:" not in prompt
     assert '"base64Data"' not in prompt
     assert '"currentNumber"' not in prompt
     assert '"capabilityManifest"' not in prompt
