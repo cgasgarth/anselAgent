@@ -65,6 +65,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6.0.2
+        with:
+          submodules: recursive
 
       - name: Restore ccache
         uses: actions/cache@v5.0.4

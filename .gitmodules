@@ -1,0 +1,20 @@
+[submodule "ansel/src/external/rawspeed"]
+	path = ansel/src/external/rawspeed
+	url = https://github.com/darktable-org/rawspeed.git
+	branch = develop
+[submodule "ansel/src/external/OpenCL"]
+	path = ansel/src/external/OpenCL
+	url = https://github.com/KhronosGroup/OpenCL-Headers.git
+[submodule "ansel/src/external/libxcf"]
+	path = ansel/src/external/libxcf
+	url = https://github.com/houz/libxcf.git
+[submodule "ansel/src/external/whereami"]
+	path = ansel/src/external/whereami
+	url = https://github.com/gpakosz/whereami
+[submodule "ansel/src/external/LibRaw"]
+	path = ansel/src/external/LibRaw
+	url = https://github.com/LibRaw/LibRaw.git
+	branch = master
+[submodule "ansel/doc/doxygen-awesome-css"]
+	path = ansel/doc/doxygen-awesome-css
+	url = https://github.com/jothepro/doxygen-awesome-css.git
