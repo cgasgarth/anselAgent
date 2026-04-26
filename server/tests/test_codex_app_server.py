@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import time
 
 import pytest
@@ -1926,7 +1927,25 @@ def test_get_or_create_thread_includes_native_dynamic_tools() -> None:
         tool for tool in tool_specs if tool["name"] == _TOOL_APPLY_OPERATIONS
     )
     assert "anyOf" not in apply_tool["inputSchema"]
+    assert "required" not in apply_tool["inputSchema"]
     assert "canonicalActions" in apply_tool["inputSchema"]["properties"]
+    assert (
+        apply_tool["inputSchema"]["properties"]["operations"]["items"]["$ref"]
+        == "#/$defs/RawToolOperation"
+    )
+    assert (
+        apply_tool["inputSchema"]["properties"]["canonicalActions"]["items"]["$ref"]
+        == "#/$defs/CanonicalEditAction"
+    )
+
+
+def test_dynamic_tools_schema_lists_supported_playbooks() -> None:
+    tool_specs = CodexAppServerBridge._dynamic_tools()
+    playbook_tool = next(
+        tool for tool in tool_specs if tool["name"] == _TOOL_GET_PLAYBOOK
+    )
+    playbook_schema = playbook_tool["inputSchema"]["properties"]["playbookId"]
+    assert playbook_schema["enum"] == [entry.id for entry in list_playbooks()]
 
 
 def test_handle_server_request_denies_approval_requests_with_decline() -> None:
@@ -2080,6 +2099,42 @@ def test_handle_server_request_routes_playbook_tool_call_to_dynamic_result() -> 
     assert '"id":"playbooks/photo_type/portrait.txt"' in payload
     assert '"title":"portrait"' in payload
     assert '"summary":"Optimize for a natural portrait baseline."' in payload
+
+
+def test_playbook_tool_rejects_invalid_arguments_before_load() -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-1", "turn-1", request, data_url)  # type: ignore[attr-defined]
+    sent_payloads: list[dict] = []
+
+    def _capture(payload):  # type: ignore[no-untyped-def]
+        sent_payloads.append(payload)
+
+    bridge._send_json_locked = _capture  # type: ignore[method-assign,attr-defined]
+    try:
+        bridge._handle_server_request_locked(  # type: ignore[attr-defined]
+            {
+                "jsonrpc": "2.0",
+                "id": 17,
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "callId": "call-playbook",
+                    "tool": _TOOL_GET_PLAYBOOK,
+                    "arguments": {"playbookId": 42},
+                },
+            }
+        )
+    finally:
+        bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+
+    result = sent_payloads[0]["result"]
+    assert result["success"] is False
+    assert "get_playbook arguments failed validation" in result["contentItems"][0]["text"]
 
 
 def test_playbook_tool_updates_request_progress_with_selected_playbook(
@@ -2371,6 +2426,68 @@ def test_apply_operations_tool_binds_canonical_actions_in_live_mode(
         assert turn_context.setting_by_id["setting.clipping.angle"][
             "currentNumber"
         ] == pytest.approx(2.5)
+    finally:
+        bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+
+
+def test_apply_operations_tool_accepts_json_encoded_canonical_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = CodexAppServerBridge(
+        command=["codex", "app-server", "--listen", "stdio://"]
+    )
+    request = _sample_request_with_canonical_controls()
+    data_url = bridge._preview_data_url(request)  # type: ignore[attr-defined]
+    bridge._register_turn_context("thread-1", "turn-1", request, data_url)  # type: ignore[attr-defined]
+    sent_payloads: list[dict] = []
+
+    def _capture(payload):  # type: ignore[no-untyped-def]
+        sent_payloads.append(payload)
+
+    bridge._send_json_locked = _capture  # type: ignore[method-assign,attr-defined]
+    try:
+        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        assert turn_context is not None
+
+        def _mock_wait(timeout=None, *, context=turn_context):
+            context.rendered_preview_bytes = b"fake-preview-json-canonical"
+            return True
+
+        monkeypatch.setattr(turn_context.render_event, "wait", _mock_wait)
+
+        bridge._handle_server_request_locked(  # type: ignore[attr-defined]
+            {
+                "jsonrpc": "2.0",
+                "id": 11901,
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "callId": "call-apply-json-canonical",
+                    "tool": _TOOL_APPLY_OPERATIONS,
+                    "arguments": {
+                        "operations": [],
+                        "canonicalActions": [
+                            json.dumps(
+                                {
+                                    "action": "adjust-exposure",
+                                    "exposureEv": 0.4,
+                                }
+                            )
+                        ],
+                    },
+                },
+            }
+        )
+
+        result = sent_payloads[0]["result"]
+        assert result["success"] is True
+        assert "Applied 1 operation" in result["contentItems"][0]["text"]
+        turn_context = bridge._get_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
+        assert turn_context is not None
+        assert turn_context.setting_by_id["setting.exposure.primary"][
+            "currentNumber"
+        ] == pytest.approx(0.4)
     finally:
         bridge._clear_turn_context("thread-1", "turn-1")  # type: ignore[attr-defined]
 

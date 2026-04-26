@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import cast
 
+from pydantic import ValidationError
+
 from shared.protocol import JsonObject
 
 from .config import (
@@ -16,64 +18,43 @@ from .config import (
     _TOOL_GET_PREVIEW_IMAGE,
     logger,
 )
-from .intent_router import list_playbooks, load_playbook
+from .intent_router import load_playbook
+from .tool_models import (
+    ApplyOperationsToolArguments,
+    ApplyOperationsToolSchema,
+    EmptyToolArguments,
+    PlaybookToolArguments,
+    model_to_arguments,
+    strict_tool_schema,
+)
 
 
 class ToolRoutingMixin:
     @staticmethod
     def _dynamic_tools() -> list[JsonObject]:
-        empty_object_schema = {
-            "type": "object",
-            "properties": {},
-            "additionalProperties": False,
-        }
-        apply_operations_schema = {
-            "type": "object",
-            "properties": {
-                "operations": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "object"},
-                },
-                "canonicalActions": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {"type": "object"},
-                },
-            },
-            "additionalProperties": False,
-        }
-        get_playbook_schema = {
-            "type": "object",
-            "properties": {
-                "playbookId": {
-                    "type": "string",
-                    "enum": [entry.id for entry in list_playbooks()],
-                }
-            },
-            "required": ["playbookId"],
-            "additionalProperties": False,
-        }
         return [
             {
                 "name": _TOOL_GET_IMAGE_STATE,
                 "description": "Get current image state for planning: authoritative editGraph, legacy editable settings, trimmed histogram, and compact analysis signals.",
-                "inputSchema": empty_object_schema,
+                "inputSchema": strict_tool_schema(EmptyToolArguments),
             },
             {
                 "name": _TOOL_GET_PREVIEW_IMAGE,
                 "description": "Get the current rendered preview image as a data URL for visual analysis.",
-                "inputSchema": empty_object_schema,
+                "inputSchema": strict_tool_schema(EmptyToolArguments),
             },
             {
                 "name": _TOOL_GET_PLAYBOOK,
                 "description": "Fetch one planning playbook by id. Choose playbooks yourself from the request and current image signals.",
-                "inputSchema": get_playbook_schema,
+                "inputSchema": strict_tool_schema(PlaybookToolArguments),
             },
             {
                 "name": _TOOL_APPLY_OPERATIONS,
                 "description": "Apply Ansel edits in the live run. Prefer graph-based operations only when an authoritative editGraph is present in image state. Do not invent raw crop/framing graph refs such as group:clipping:* or group:crop:*; use canonicalActions for crop/framing instead. The runtime resolves graph and canonical targets to concrete controls before stepwise live application and render refresh.",
-                "inputSchema": apply_operations_schema,
+                "inputSchema": strict_tool_schema(
+                    ApplyOperationsToolArguments,
+                    schema_model=ApplyOperationsToolSchema,
+                ),
             },
         ]
 
@@ -153,33 +134,42 @@ class ToolRoutingMixin:
         if guardrail_error is not None:
             response = self._tool_error_response(guardrail_error)
         elif tool_name == _TOOL_GET_PREVIEW_IMAGE:
-            response = {
-                "success": True,
-                "contentItems": [
-                    {"type": "inputImage", "imageUrl": context.preview_data_url}
-                ],
-            }
-        elif tool_name == _TOOL_GET_IMAGE_STATE:
-            response = {
-                "success": True,
-                "contentItems": [
-                    {
-                        "type": "inputText",
-                        "text": json.dumps(
-                            context.state_payload, separators=(",", ":")
-                        ),
-                    }
-                ],
-            }
-        elif tool_name == _TOOL_GET_PLAYBOOK:
-            playbook_id = arguments.get("playbookId")
-            if not isinstance(playbook_id, str) or not playbook_id:
-                response = self._tool_error_response(
-                    "get_playbook requires a playbookId string."
-                )
+            validation_error = self._validate_empty_tool_arguments(arguments)
+            if validation_error is not None:
+                response = self._tool_error_response(validation_error)
             else:
+                response = {
+                    "success": True,
+                    "contentItems": [
+                        {"type": "inputImage", "imageUrl": context.preview_data_url}
+                    ],
+                }
+        elif tool_name == _TOOL_GET_IMAGE_STATE:
+            validation_error = self._validate_empty_tool_arguments(arguments)
+            if validation_error is not None:
+                response = self._tool_error_response(validation_error)
+            else:
+                response = {
+                    "success": True,
+                    "contentItems": [
+                        {
+                            "type": "inputText",
+                            "text": json.dumps(
+                                context.state_payload, separators=(",", ":")
+                            ),
+                        }
+                    ],
+                }
+        elif tool_name == _TOOL_GET_PLAYBOOK:
+            parsed_playbook, validation_error = self._parse_playbook_arguments(
+                arguments
+            )
+            if validation_error is not None:
+                response = self._tool_error_response(validation_error)
+            else:
+                assert parsed_playbook is not None
                 try:
-                    playbook = load_playbook(playbook_id)
+                    playbook = load_playbook(parsed_playbook.playbookId)
                 except ValueError as exc:
                     response = self._tool_error_response(str(exc))
                 else:
@@ -202,12 +192,19 @@ class ToolRoutingMixin:
                         ],
                     }
         elif tool_name == _TOOL_APPLY_OPERATIONS:
-            response = self._apply_operations_tool_call(
-                context,
-                arguments,
-                thread_id=thread_id,
-                turn_id=turn_id,
+            parsed_apply, validation_error = self._parse_apply_operations_arguments(
+                arguments
             )
+            if validation_error is not None:
+                response = self._tool_error_response(validation_error)
+            else:
+                assert parsed_apply is not None
+                response = self._apply_operations_tool_call(
+                    context,
+                    model_to_arguments(parsed_apply),
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
         else:
             response = self._tool_error_response(
                 f"Unsupported tool '{tool_name}'. Supported tools: {_TOOL_GET_PREVIEW_IMAGE}, {_TOOL_GET_IMAGE_STATE}, {_TOOL_GET_PLAYBOOK}, {_TOOL_APPLY_OPERATIONS}."
@@ -377,3 +374,35 @@ class ToolRoutingMixin:
             "success": False,
             "contentItems": [{"type": "inputText", "text": message}],
         }
+
+    @staticmethod
+    def _validate_empty_tool_arguments(arguments: JsonObject) -> str | None:
+        try:
+            EmptyToolArguments.model_validate(arguments)
+        except ValidationError as exc:
+            return f"Tool arguments failed validation: {exc}"
+        return None
+
+    @staticmethod
+    def _parse_playbook_arguments(
+        arguments: JsonObject,
+    ) -> tuple[PlaybookToolArguments | None, str | None]:
+        try:
+            return PlaybookToolArguments.model_validate(arguments), None
+        except ValidationError as exc:
+            return None, f"get_playbook arguments failed validation: {exc}"
+
+    @staticmethod
+    def _parse_apply_operations_arguments(
+        arguments: JsonObject,
+    ) -> tuple[ApplyOperationsToolArguments | None, str | None]:
+        try:
+            parsed = ApplyOperationsToolArguments.model_validate(arguments)
+        except ValidationError as exc:
+            return None, f"apply_operations arguments failed validation: {exc}"
+        if not parsed.operations and not parsed.canonicalActions:
+            return (
+                None,
+                "apply_operations requires operations or canonicalActions.",
+            )
+        return parsed, None
